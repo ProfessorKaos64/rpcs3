@@ -333,7 +333,7 @@ public:
 				auto& vmfprog = vm::ps3::_ref<CgBinaryFragmentProgram>(ptr + vmprog.program);
 				u32 size;
 				u32 ctrl = (vmfprog.outputFromH0 ? 0 : 0x40) | (vmfprog.depthReplace ? 0xe : 0);
-				std::vector<texture_dimension> td;
+				std::vector<rsx::texture_dimension_extended> td;
 				RSXFragmentProgram prog;
 				prog.size = 0, prog.addr = vm::base(ptr + vmprog.ucode), prog.offset = 0, prog.ctrl = ctrl;
 				GLFragmentDecompilerThread(m_glsl_shader, param_array, prog, size).Task();
@@ -373,7 +373,7 @@ public:
 			m_offset = prog.ucode;
 
 			u32* vdata = (u32*)&m_buffer[m_offset];
-			assert((m_buffer_size - m_offset) % sizeof(u32) == 0);
+			ENSURES((m_buffer_size - m_offset) % sizeof(u32) == 0);
 			for (u32 i = 0; i < (m_buffer_size - m_offset) / sizeof(u32); i++)
 			{
 				vdata[i] = se_storage<u32>::swap(vdata[i]); // WTF, cannot use be_t<> there?

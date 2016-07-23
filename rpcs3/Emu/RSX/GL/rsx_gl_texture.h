@@ -1,7 +1,9 @@
 #include "OpenGL.h"
+#include "../GCM.h"
 
 namespace rsx
 {
+	class vertex_texture;
 	class texture;
 
 	namespace gl
@@ -14,9 +16,9 @@ namespace rsx
 		public:
 			void create();
 
-			int gl_wrap(int wrap);
+			int gl_wrap(rsx::texture_wrap_mode in);
 
-			float max_aniso(int aniso);
+			float max_aniso(rsx::texture_max_anisotropy aniso);
 
 			inline static u8 convert_4_to_8(u8 v)
 			{
@@ -37,6 +39,7 @@ namespace rsx
 			}
 
 			void init(int index, rsx::texture& tex);
+			void init(int index, rsx::vertex_texture& tex);
 			
 			/**
 			* If a format is marked as mandating expansion, any request to have the data uploaded to the GPU shall require that the pixel data

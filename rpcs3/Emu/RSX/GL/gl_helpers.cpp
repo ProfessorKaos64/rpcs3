@@ -16,11 +16,36 @@ namespace gl
 		case rsx::primitive_type::triangles: return GL_TRIANGLES;
 		case rsx::primitive_type::triangle_strip: return GL_TRIANGLE_STRIP;
 		case rsx::primitive_type::triangle_fan: return GL_TRIANGLE_FAN;
-		case rsx::primitive_type::quads: return GL_QUADS;
-		case rsx::primitive_type::quad_strip: return GL_QUAD_STRIP;
-		case rsx::primitive_type::polygon: return GL_POLYGON;
+		case rsx::primitive_type::quads: return GL_TRIANGLES;
+		case rsx::primitive_type::quad_strip: return GL_TRIANGLES;
+		case rsx::primitive_type::polygon: return GL_TRIANGLES;
 		}
-		throw new EXCEPTION("unknow primitive type");
+		throw EXCEPTION("unknow primitive type");
+	}
+
+#ifdef WIN32
+	void APIENTRY dbgFunc(GLenum source, GLenum type, GLuint id,
+		GLenum severity, GLsizei lenght, const GLchar* message,
+		const void* userParam)
+	{
+		switch (type)
+		{
+		case GL_DEBUG_TYPE_ERROR:
+			LOG_ERROR(RSX, "%s", message);
+			return;
+		default:
+			LOG_WARNING(RSX, "%s", message);
+			return;
+		}
+	}
+#endif
+
+	void enable_debugging()
+	{
+#ifdef WIN32
+		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+		glDebugMessageCallback(static_cast<GLDEBUGPROC>(dbgFunc), nullptr);
+#endif
 	}
 
 	void fbo::create()
@@ -95,6 +120,14 @@ namespace gl
 			ids.push_back(index.id());
 
 		__glcheck glDrawBuffers((GLsizei)ids.size(), ids.data());
+	}
+
+	void fbo::read_buffer(const attachment& buffer) const
+	{
+		save_binding_state save(*this);
+		GLenum buf = buffer.id();
+
+		__glcheck glReadBuffer(buf);
 	}
 
 	void fbo::draw_arrays(rsx::primitive_type mode, GLsizei count, GLint first) const
@@ -484,5 +517,25 @@ namespace gl
 	void texture::config(const settings& settings_)
 	{
 		settings_.apply(*this);
+	}
+
+	bool is_primitive_native(rsx::primitive_type in)
+	{
+		switch (in)
+		{
+		case rsx::primitive_type::points:
+		case rsx::primitive_type::lines:
+		case rsx::primitive_type::line_loop:
+		case rsx::primitive_type::line_strip:
+		case rsx::primitive_type::triangles:
+		case rsx::primitive_type::triangle_strip:
+		case rsx::primitive_type::triangle_fan:
+			return true;
+		case rsx::primitive_type::quads:
+		case rsx::primitive_type::quad_strip:
+		case rsx::primitive_type::polygon:
+			return false;
+		}
+		throw EXCEPTION("unknown primitive type");
 	}
 }

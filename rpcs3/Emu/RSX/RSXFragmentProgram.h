@@ -1,7 +1,16 @@
 #pragma once
 #include "GCM.h"
+#include "RSXTexture.h"
 
-enum
+enum register_type
+{
+	RSX_FP_REGISTER_TYPE_TEMP = 0,
+	RSX_FP_REGISTER_TYPE_INPUT = 1,
+	RSX_FP_REGISTER_TYPE_CONSTANT = 2,
+	RSX_FP_REGISTER_TYPE_UNKNOWN = 3,
+};
+
+enum fp_opcode
 {
 	RSX_FP_OPCODE_NOP        = 0x00, // No-Operation
 	RSX_FP_OPCODE_MOV        = 0x01, // Move
@@ -205,14 +214,6 @@ static const std::string rsx_fp_op_names[] =
 	"NULL", "BRK", "CAL", "IFE", "LOOP", "REP", "RET"
 };
 
-enum class texture_dimension : u8
-{
-	texture_dimension_1d = 0,
-	texture_dimension_2d = 1,
-	texture_dimension_cubemap = 2,
-	texture_dimension_3d = 3,
-};
-
 struct RSXFragmentProgram
 {
 	u32 size;
@@ -220,25 +221,27 @@ struct RSXFragmentProgram
 	u32 offset;
 	u32 ctrl;
 	u16 unnormalized_coords;
-	rsx::comparaison_function alpha_func;
+	rsx::comparison_function alpha_func;
 	bool front_back_color_enabled : 1;
 	bool back_color_diffuse_output : 1;
 	bool back_color_specular_output : 1;
+	bool front_color_diffuse_output : 1;
+	bool front_color_specular_output : 1;
 	u32 texture_dimensions;
 	rsx::window_origin origin_mode;
 	rsx::window_pixel_center pixel_center_mode;
 	rsx::fog_mode fog_equation;
 	u16 height;
 
-	texture_dimension get_texture_dimension(u8 id) const
+	rsx::texture_dimension_extended get_texture_dimension(u8 id) const
 	{
-		return (texture_dimension)((texture_dimensions >> (id * 2)) & 0x3);
+		return (rsx::texture_dimension_extended)((texture_dimensions >> (id * 2)) & 0x3);
 	}
 
-	void set_texture_dimension(const std::array<texture_dimension, 16> &dimensions)
+	void set_texture_dimension(const std::array<rsx::texture_dimension_extended, 16> &dimensions)
 	{
 		size_t id = 0;
-		for (const texture_dimension &dim : dimensions)
+		for (const rsx::texture_dimension_extended &dim : dimensions)
 		{
 			texture_dimensions &= ~(0x3 << (id * 2));
 			u8 d = (u8)dim;

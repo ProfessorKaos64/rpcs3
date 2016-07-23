@@ -8,12 +8,14 @@
 #include <memory>
 #include <unordered_map>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include "Emu/state.h"
+#include "Utilities/Config.h"
 #include "VulkanAPI.h"
 #include "../GCM.h"
+#include "../Common/TextureUtils.h"
+#include "../Common/ring_buffer_helper.h"
+
+#define DESCRIPTOR_MAX_DRAW_CALLS 1024
+extern cfg::bool_entry g_cfg_rsx_debug_output;
 
 namespace rsx
 {
@@ -53,19 +55,19 @@ namespace vk
 
 	VkComponentMapping default_component_map();
 	VkImageSubresource default_image_subresource();
-	VkImageSubresourceRange default_image_subresource_range();
+	VkImageSubresourceRange get_image_subresource_range(uint32_t base_layer, uint32_t base_mip, uint32_t layer_count, uint32_t level_count, VkImageAspectFlags aspect);
 
 	VkSampler null_sampler();
 	VkImageView null_image_view();
 
 	void destroy_global_resources();
 
-	void change_image_layout(VkCommandBuffer cmd, VkImage image, VkImageLayout current_layout, VkImageLayout new_layout, VkImageAspectFlags aspect_flags);
+	void change_image_layout(VkCommandBuffer cmd, VkImage image, VkImageLayout current_layout, VkImageLayout new_layout, VkImageSubresourceRange range);
 	void copy_image(VkCommandBuffer cmd, VkImage &src, VkImage &dst, VkImageLayout srcLayout, VkImageLayout dstLayout, u32 width, u32 height, u32 mipmaps, VkImageAspectFlagBits aspect);
 	void copy_scaled_image(VkCommandBuffer cmd, VkImage &src, VkImage &dst, VkImageLayout srcLayout, VkImageLayout dstLayout, u32 src_width, u32 src_height, u32 dst_width, u32 dst_height, u32 mipmaps, VkImageAspectFlagBits aspect);
 
 	VkFormat get_compatible_sampler_format(u32 format);
-	VkFormat get_compatible_surface_format(rsx::surface_color_format color_format);
+	std::pair<VkFormat, VkComponentMapping> get_compatible_surface_format(rsx::surface_color_format color_format);
 	size_t get_render_pass_location(VkFormat color_surface_format, VkFormat depth_stencil_format, u8 color_surface_count);
 
 	struct memory_type_mapping
@@ -122,7 +124,7 @@ namespace vk
 				vkGetPhysicalDeviceQueueFamilyProperties(dev, &count, queue_props.data());
 			}
 
-			if (queue >= queue_props.size()) throw EXCEPTION("Undefined trap");
+			if (queue >= queue_props.size()) throw EXCEPTION("Bad queue index passed to get_queue_properties (%u)", queue);
 			return queue_props[queue];
 		}
 
@@ -152,8 +154,6 @@ namespace vk
 
 		render_device(vk::physical_device &pdev, uint32_t graphics_queue_idx)
 		{
-			VkResult err;
-
 			float queue_priorities[1] = { 0.f };
 			pgpu = &pdev;
 
@@ -172,7 +172,7 @@ namespace vk
 
 			std::vector<const char *> layers;
 
-			if (rpcs3::config.rsx.d3d12.debug_output.value())
+			if (g_cfg_rsx_debug_output)
 				layers.push_back("VK_LAYER_LUNARG_standard_validation");
 
 			VkDeviceCreateInfo device;
@@ -180,14 +180,13 @@ namespace vk
 			device.pNext = NULL;
 			device.queueCreateInfoCount = 1;
 			device.pQueueCreateInfos = &queue;
-			device.enabledLayerCount = layers.size();
+			device.enabledLayerCount = static_cast<uint32_t>(layers.size());
 			device.ppEnabledLayerNames = layers.data();
 			device.enabledExtensionCount = 1;
 			device.ppEnabledExtensionNames = requested_extensions;
 			device.pEnabledFeatures = nullptr;
 
-			err = vkCreateDevice(*pgpu, &device, nullptr, &dev);
-			if (err != VK_SUCCESS) throw EXCEPTION("Undefined trap");
+			CHECK_RESULT(vkCreateDevice(*pgpu, &device, nullptr, &dev));
 		}
 
 		~render_device()
@@ -332,6 +331,61 @@ namespace vk
 		}
 	};
 
+	struct image
+	{
+		VkImage value;
+		VkComponentMapping native_layout = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+		VkImageCreateInfo info = {};
+		std::shared_ptr<vk::memory_block> memory;
+
+		image(VkDevice dev, uint32_t memory_type_index,
+			VkImageType image_type,
+			VkFormat format,
+			uint32_t width, uint32_t height, uint32_t depth,
+			uint32_t mipmaps, uint32_t layers,
+			VkSampleCountFlagBits samples,
+			VkImageLayout initial_layout,
+			VkImageTiling tiling,
+			VkImageUsageFlags usage,
+			VkImageCreateFlags image_flags)
+			: m_device(dev)
+		{
+			info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+			info.imageType = image_type;
+			info.format = format;
+			info.extent = { width, height, depth };
+			info.mipLevels = mipmaps;
+			info.arrayLayers = layers;
+			info.samples = samples;
+			info.tiling = tiling;
+			info.usage = usage;
+			info.flags = image_flags;
+			info.initialLayout = initial_layout;
+			info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+			CHECK_RESULT(vkCreateImage(m_device, &info, nullptr, &value));
+
+			VkMemoryRequirements memory_req;
+			vkGetImageMemoryRequirements(m_device, value, &memory_req);
+			memory = std::make_shared<vk::memory_block>(m_device, memory_req.size, memory_type_index);
+
+			CHECK_RESULT(vkBindImageMemory(m_device, value, memory->memory, 0));
+		}
+
+		// TODO: Ctor that uses a provided memory heap
+
+		~image()
+		{
+			vkDestroyImage(m_device, value, nullptr);
+		}
+
+		image(const image&) = delete;
+		image(image&&) = delete;
+
+	private:
+		VkDevice m_device;
+	};
+
 	struct image_view
 	{
 		VkImageView value;
@@ -441,10 +495,10 @@ namespace vk
 			vkDestroyBuffer(m_device, value, nullptr);
 		}
 
-		void *map(u32 offset, u64 size)
+		void *map(u64 offset, u64 size)
 		{
 			void *data = nullptr;
-			CHECK_RESULT(vkMapMemory(m_device, memory->memory, offset, size, 0, &data));
+			CHECK_RESULT(vkMapMemory(m_device, memory->memory, offset, std::max<u64>(size, 1u), 0, &data));
 			return data;
 		}
 
@@ -495,7 +549,7 @@ namespace vk
 
 		sampler(VkDevice dev, VkSamplerAddressMode clamp_u, VkSamplerAddressMode clamp_v, VkSamplerAddressMode clamp_w,
 			bool unnormalized_coordinates, float mipLodBias, float max_anisotropy, float min_lod, float max_lod,
-			VkFilter min_filter, VkFilter mag_filter, VkSamplerMipmapMode mipmap_mode)
+			VkFilter min_filter, VkFilter mag_filter, VkSamplerMipmapMode mipmap_mode, VkBorderColor border_color)
 			: m_device(dev)
 		{
 			VkSamplerCreateInfo info = {};
@@ -514,7 +568,7 @@ namespace vk
 			info.minFilter = min_filter;
 			info.mipmapMode = mipmap_mode;
 			info.compareOp = VK_COMPARE_OP_NEVER;
-			info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+			info.borderColor = border_color;
 
 			CHECK_RESULT(vkCreateSampler(m_device, &info, nullptr, &value));
 		}
@@ -549,7 +603,7 @@ namespace vk
 			info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 			info.width = width;
 			info.height = height;
-			info.attachmentCount = image_view_array.size();
+			info.attachmentCount = static_cast<uint32_t>(image_view_array.size());
 			info.pAttachments = image_view_array.data();
 			info.renderPass = pass;
 			info.layers = 1;
@@ -787,7 +841,7 @@ namespace vk
 			nb_swap_images = 0;
 			getSwapchainImagesKHR(dev, m_vk_swapchain, &nb_swap_images, nullptr);
 			
-			if (!nb_swap_images) throw EXCEPTION("Undefined trap");
+			if (!nb_swap_images) throw EXCEPTION("Driver returned 0 images for swapchain");
 
 			std::vector<VkImage> swap_images;
 			swap_images.resize(nb_swap_images);
@@ -844,7 +898,7 @@ namespace vk
 		{
 			owner = &dev;
 			VkCommandPoolCreateInfo infos = {};
-			infos.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+			infos.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
 			infos.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 
 			CHECK_RESULT(vkCreateCommandPool(dev, &infos, nullptr, &pool));
@@ -983,21 +1037,19 @@ namespace vk
 
 			std::vector<const char *> layers;
 
-			if (rpcs3::config.rsx.d3d12.debug_output.value())
+			if (g_cfg_rsx_debug_output)
 				layers.push_back("VK_LAYER_LUNARG_standard_validation");
 
 			VkInstanceCreateInfo instance_info = {};
 			instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 			instance_info.pApplicationInfo = &app;
-			instance_info.enabledLayerCount = layers.size();
+			instance_info.enabledLayerCount = static_cast<uint32_t>(layers.size());
 			instance_info.ppEnabledLayerNames = layers.data();
 			instance_info.enabledExtensionCount = 3;
 			instance_info.ppEnabledExtensionNames = requested_extensions;
 
 			VkInstance instance;
-			VkResult error = vkCreateInstance(&instance_info, nullptr, &instance);
-
-			if (error != VK_SUCCESS) throw EXCEPTION("Undefined trap");
+			CHECK_RESULT(vkCreateInstance(&instance_info, nullptr, &instance));
 
 			m_vk_instances.push_back(instance);
 			return (u32)m_vk_instances.size();
@@ -1006,7 +1058,7 @@ namespace vk
 		void makeCurrentInstance(uint32_t instance_id)
 		{
 			if (!instance_id || instance_id > m_vk_instances.size())
-				throw EXCEPTION("Undefined trap");
+				throw EXCEPTION("Invalid instance passed to makeCurrentInstance (%u)", instance_id);
 
 			if (m_debugger)
 			{
@@ -1026,7 +1078,7 @@ namespace vk
 		VkInstance getInstanceById(uint32_t instance_id)
 		{
 			if (!instance_id || instance_id > m_vk_instances.size())
-				throw EXCEPTION("Undefined trap");
+				throw EXCEPTION("Invalid instance passed to getInstanceById (%u)", instance_id);
 
 			instance_id--;
 			return m_vk_instances[instance_id];
@@ -1060,7 +1112,7 @@ namespace vk
 			createInfo.hwnd = hWnd;
 
 			VkSurfaceKHR surface;
-			VkResult err = vkCreateWin32SurfaceKHR(m_instance, &createInfo, NULL, &surface);
+			CHECK_RESULT(vkCreateWin32SurfaceKHR(m_instance, &createInfo, NULL, &surface));
 
 			uint32_t device_queues = dev.get_queue_count();
 			std::vector<VkBool32> supportsPresent(device_queues);
@@ -1108,19 +1160,17 @@ namespace vk
 
 			// Generate error if could not find both a graphics and a present queue
 			if (graphicsQueueNodeIndex == UINT32_MAX || presentQueueNodeIndex == UINT32_MAX)
-				throw EXCEPTION("Undefined trap");
+				throw EXCEPTION("Failed to find a suitable graphics/compute queue");
 
 			if (graphicsQueueNodeIndex != presentQueueNodeIndex)
-				throw EXCEPTION("Undefined trap");
+				throw EXCEPTION("Separate graphics and present queues not supported");
 
 			// Get the list of VkFormat's that are supported:
 			uint32_t formatCount;
-			err = vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, nullptr);
-			if (err != VK_SUCCESS) throw EXCEPTION("Undefined trap");
+			CHECK_RESULT(vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, nullptr));
 
 			std::vector<VkSurfaceFormatKHR> surfFormats(formatCount);
-			err = vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, surfFormats.data());
-			if (err != VK_SUCCESS) throw EXCEPTION("Undefined trap");
+			CHECK_RESULT(vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, surfFormats.data()));
 
 			VkFormat format;
 			VkColorSpaceKHR color_space;
@@ -1131,7 +1181,7 @@ namespace vk
 			}
 			else
 			{
-				if (!formatCount) throw EXCEPTION("Undefined trap");
+				if (!formatCount) throw EXCEPTION("Format count is zero!");
 				format = surfFormats[0].format;
 			}
 
@@ -1155,8 +1205,8 @@ namespace vk
 		void create(vk::render_device &dev, VkDescriptorPoolSize *sizes, u32 size_descriptors_count)
 		{
 			VkDescriptorPoolCreateInfo infos = {};
-			infos.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-			infos.maxSets = 2;
+			infos.flags = 0;
+			infos.maxSets = DESCRIPTOR_MAX_DRAW_CALLS;
 			infos.poolSizeCount = size_descriptors_count;
 			infos.pPoolSizes = sizes;
 			infos.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1202,8 +1252,9 @@ namespace vk
 
 		struct bound_sampler
 		{
-			VkImageView image_view = nullptr;
-			VkSampler sampler = nullptr;
+			VkFormat format;
+			VkImage image;
+			VkComponentMapping mapping;
 		};
 
 		struct bound_buffer
@@ -1251,4 +1302,28 @@ namespace vk
 			void bind_uniform(const VkBufferView &buffer_view, const std::string &binding_name, VkDescriptorSet &descriptor_set);
 		};
 	}
+
+	struct vk_data_heap : public data_heap
+	{
+		std::unique_ptr<vk::buffer> heap;
+
+		void* map(size_t offset, size_t size)
+		{
+			return heap->map(offset, size);
+		}
+
+		void unmap()
+		{
+			heap->unmap();
+		}
+	};
+
+	/**
+	* Allocate enough space in upload_buffer and write all mipmap/layer data into the subbuffer.
+	* Then copy all layers into dst_image.
+	* dst_image must be in TRANSFER_DST_OPTIMAL layout and upload_buffer have TRANSFER_SRC_BIT usage flag.
+	*/
+	void copy_mipmaped_image_using_buffer(VkCommandBuffer cmd, VkImage dst_image,
+		const std::vector<rsx_subresource_layout> subresource_layout, int format, bool is_swizzled, u16 mipmap_count,
+		vk::vk_data_heap &upload_heap, vk::buffer* upload_buffer);
 }

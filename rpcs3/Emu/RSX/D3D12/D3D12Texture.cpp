@@ -1,11 +1,12 @@
+#ifdef _MSC_VER
 #include "stdafx.h"
 #include "stdafx_d3d12.h"
-#ifdef _MSC_VER
 #include "D3D12GSRender.h"
 #include "d3dx12.h"
 #include "../Common/TextureUtils.h"
 // For clarity this code deals with texture but belongs to D3D12GSRender class
 #include "D3D12Formats.h"
+#include "../rsx_methods.h"
 
 namespace
 {
@@ -47,21 +48,70 @@ namespace
 		const u8 format = texture.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
 		DXGI_FORMAT dxgi_format = get_texture_format(format);
 
-		if (texture.dimension() == 1) // 1D texture or cubemap
+		switch (texture.get_extended_texture_dimension())
 		{
-			return CD3DX12_RESOURCE_DESC::Tex1D(dxgi_format, texture.width(), 1, texture.mipmap());
+		case rsx::texture_dimension_extended::texture_dimension_1d:
+			return CD3DX12_RESOURCE_DESC::Tex1D(dxgi_format, texture.width(), 1, texture.get_exact_mipmap_count());
+		case rsx::texture_dimension_extended::texture_dimension_2d:
+			return CD3DX12_RESOURCE_DESC::Tex2D(dxgi_format, texture.width(), texture.height(), 1, texture.get_exact_mipmap_count());
+		case rsx::texture_dimension_extended::texture_dimension_cubemap:
+			return CD3DX12_RESOURCE_DESC::Tex2D(dxgi_format, texture.width(), texture.height(), 6, texture.get_exact_mipmap_count());
+		case rsx::texture_dimension_extended::texture_dimension_3d:
+			return CD3DX12_RESOURCE_DESC::Tex3D(dxgi_format, texture.width(), texture.height(), texture.depth(), texture.get_exact_mipmap_count());
 		}
-		else if (texture.dimension() == 2) // 2D texture or cubemap
+		throw EXCEPTION("Unknown texture dimension");
+	}
+}
+
+namespace {
+	/**
+	 * Allocate buffer in texture_buffer_heap big enough and upload data into existing_texture which should be in COPY_DEST state
+	 */
+	void update_existing_texture(
+		const rsx::texture &texture,
+		ID3D12GraphicsCommandList *command_list,
+		d3d12_data_heap &texture_buffer_heap,
+		ID3D12Resource *existing_texture)
+	{
+		size_t w = texture.width(), h = texture.height();
+
+		const u8 format = texture.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
+		DXGI_FORMAT dxgi_format = get_texture_format(format);
+
+		size_t buffer_size = get_placed_texture_storage_size(texture, 256);
+		size_t heap_offset = texture_buffer_heap.alloc<D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT>(buffer_size);
+		size_t mip_level = 0;
+
+		void *mapped_buffer_ptr = texture_buffer_heap.map<void>(CD3DX12_RANGE(heap_offset, heap_offset + buffer_size));
+		gsl::span<gsl::byte> mapped_buffer{ (gsl::byte*)mapped_buffer_ptr, gsl::narrow<int>(buffer_size) };
+		std::vector<rsx_subresource_layout> input_layouts = get_subresources_layout(texture);
+		u8 block_size_in_bytes = get_format_block_size_in_bytes(format);
+		u8 block_size_in_texel = get_format_block_size_in_texel(format);
+		bool is_swizzled = !(texture.format() & CELL_GCM_TEXTURE_LN);
+		size_t offset_in_buffer = 0;
+		for (const rsx_subresource_layout &layout : input_layouts)
 		{
-//			if (texture.depth() < 2);
-			size_t depth = (texture.cubemap()) ? 6 : 1;
-			return CD3DX12_RESOURCE_DESC::Tex2D(dxgi_format, texture.width(), texture.height(), (UINT)depth, texture.mipmap());
+			upload_texture_subresource(mapped_buffer.subspan(offset_in_buffer), layout, format, is_swizzled, 256);
+			UINT row_pitch = align(layout.width_in_block * block_size_in_bytes, 256);
+			command_list->CopyTextureRegion(&CD3DX12_TEXTURE_COPY_LOCATION(existing_texture, (UINT)mip_level), 0, 0, 0,
+				&CD3DX12_TEXTURE_COPY_LOCATION(texture_buffer_heap.get_heap(),
+				{ heap_offset + offset_in_buffer,
+				{
+					dxgi_format,
+					(UINT)layout.width_in_block * block_size_in_texel,
+					(UINT)layout.height_in_block * block_size_in_texel,
+					(UINT)layout.depth,
+					row_pitch
+				}
+				}), nullptr);
+
+			offset_in_buffer += row_pitch * layout.height_in_block * layout.depth;
+			offset_in_buffer = align(offset_in_buffer, 512);
+			mip_level++;
 		}
-		else if (texture.dimension() == 3) // 3d texture
-		{
-			return CD3DX12_RESOURCE_DESC::Tex3D(dxgi_format, texture.width(), texture.height(), texture.depth(), texture.mipmap());
-		}
-		throw EXCEPTION("Unknow texture dimension");
+		texture_buffer_heap.unmap(CD3DX12_RANGE(heap_offset, heap_offset + buffer_size));
+
+		command_list->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(existing_texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ));
 	}
 }
 
@@ -74,11 +124,8 @@ ComPtr<ID3D12Resource> upload_single_texture(
 	const rsx::texture &texture,
 	ID3D12Device *device,
 	ID3D12GraphicsCommandList *command_list,
-	data_heap &texture_buffer_heap)
+	d3d12_data_heap &texture_buffer_heap)
 {
-	size_t buffer_size = get_placed_texture_storage_size(texture, 256);
-	size_t heap_offset = texture_buffer_heap.alloc<D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT>(buffer_size);
-
 	ComPtr<ID3D12Resource> result;
 	CHECK_HRESULT(device->CreateCommittedResource(
 		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
@@ -89,121 +136,34 @@ ComPtr<ID3D12Resource> upload_single_texture(
 		IID_PPV_ARGS(result.GetAddressOf())
 		));
 
-	const u8 format = texture.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
-	DXGI_FORMAT dxgi_format = get_texture_format(format);
-	size_t mip_level = 0;
-
-	void *mapped_buffer_ptr = texture_buffer_heap.map<void>(CD3DX12_RANGE(heap_offset, heap_offset + buffer_size));
-	gsl::span<gsl::byte> mapped_buffer{ (gsl::byte*)mapped_buffer_ptr, gsl::narrow<int>(buffer_size) };
-	std::vector<rsx_subresource_layout> input_layouts = get_subresources_layout(texture);
-	u8 block_size_in_bytes = get_format_block_size_in_bytes(format);
-	u8 block_size_in_texel = get_format_block_size_in_texel(format);
-	bool is_swizzled = !(texture.format() & CELL_GCM_TEXTURE_LN);
-	size_t offset_in_buffer = 0;
-	for (const rsx_subresource_layout &layout : input_layouts)
-	{
-		upload_texture_subresource(mapped_buffer.subspan(offset_in_buffer), layout, format, is_swizzled, 256);
-		UINT row_pitch = align(layout.width_in_block * block_size_in_bytes, 256);
-		command_list->CopyTextureRegion(&CD3DX12_TEXTURE_COPY_LOCATION(result.Get(), (UINT)mip_level), 0, 0, 0,
-			&CD3DX12_TEXTURE_COPY_LOCATION(texture_buffer_heap.get_heap(),
-				{ heap_offset + offset_in_buffer,
-					{
-						dxgi_format,
-						(UINT)layout.width_in_block * block_size_in_texel,
-						(UINT)layout.height_in_block * block_size_in_texel,
-						(UINT)layout.depth,
-						row_pitch
-				}
-			}), nullptr);
-
-		offset_in_buffer += row_pitch * layout.height_in_block * layout.depth;
-		offset_in_buffer = align(offset_in_buffer, 512);
-		mip_level++;
-	}
-	texture_buffer_heap.unmap(CD3DX12_RANGE(heap_offset, heap_offset + buffer_size));
-
-	command_list->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(result.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ));
+	update_existing_texture(texture, command_list, texture_buffer_heap, result.Get());
 	return result;
 }
 
-/**
-*
-*/
-void update_existing_texture(
-	const rsx::texture &texture,
-	ID3D12GraphicsCommandList *command_list,
-	data_heap &texture_buffer_heap,
-	ID3D12Resource *existing_texture)
-{
-	size_t w = texture.width(), h = texture.height();
-
-	const u8 format = texture.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
-	DXGI_FORMAT dxgi_format = get_texture_format(format);
-
-	size_t buffer_size = get_placed_texture_storage_size(texture, 256);
-	size_t heap_offset = texture_buffer_heap.alloc<D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT>(buffer_size);
-	size_t mip_level = 0;
-
-	void *mapped_buffer_ptr = texture_buffer_heap.map<void>(CD3DX12_RANGE(heap_offset, heap_offset + buffer_size));
-	gsl::span<gsl::byte> mapped_buffer{ (gsl::byte*)mapped_buffer_ptr, gsl::narrow<int>(buffer_size) };
-	std::vector<rsx_subresource_layout> input_layouts = get_subresources_layout(texture);
-	u8 block_size_in_bytes = get_format_block_size_in_bytes(format);
-	u8 block_size_in_texel = get_format_block_size_in_texel(format);
-	bool is_swizzled = !(texture.format() & CELL_GCM_TEXTURE_LN);
-	size_t offset_in_buffer = 0;
-	for (const rsx_subresource_layout &layout : input_layouts)
-	{
-		upload_texture_subresource(mapped_buffer.subspan(offset_in_buffer), layout, format, is_swizzled, 256);
-		UINT row_pitch = align(layout.width_in_block * block_size_in_bytes, 256);
-		command_list->CopyTextureRegion(&CD3DX12_TEXTURE_COPY_LOCATION(existing_texture, (UINT)mip_level), 0, 0, 0,
-			&CD3DX12_TEXTURE_COPY_LOCATION(texture_buffer_heap.get_heap(),
-			{ heap_offset + offset_in_buffer,
-			{
-				dxgi_format,
-				(UINT)layout.width_in_block * block_size_in_texel,
-				(UINT)layout.height_in_block * block_size_in_texel,
-				(UINT)layout.depth,
-				row_pitch
-			}
-			}), nullptr);
-
-		offset_in_buffer += row_pitch * layout.height_in_block * layout.depth;
-		offset_in_buffer = align(offset_in_buffer, 512);
-		mip_level++;
-	}
-	texture_buffer_heap.unmap(CD3DX12_RANGE(heap_offset, heap_offset + buffer_size));
-
-	command_list->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(existing_texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ));
-}
 
 D3D12_SHADER_RESOURCE_VIEW_DESC get_srv_descriptor_with_dimensions(const rsx::texture &tex)
 {
 	D3D12_SHADER_RESOURCE_VIEW_DESC shared_resource_view_desc = {};
-	if (tex.dimension() == 1)
+	switch (tex.get_extended_texture_dimension())
 	{
+	case rsx::texture_dimension_extended::texture_dimension_1d:
 		shared_resource_view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
-		shared_resource_view_desc.Texture1D.MipLevels = tex.mipmap();
+		shared_resource_view_desc.Texture1D.MipLevels = tex.get_exact_mipmap_count();
 		return shared_resource_view_desc;
-	}
-	if (tex.dimension() == 2)
-	{
-		if (tex.cubemap())
-		{
-			shared_resource_view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-			shared_resource_view_desc.TextureCube.MipLevels = tex.mipmap();
-			return shared_resource_view_desc;
-		}
+	case rsx::texture_dimension_extended::texture_dimension_2d:
 		shared_resource_view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		shared_resource_view_desc.Texture2D.MipLevels = tex.mipmap();
+		shared_resource_view_desc.Texture2D.MipLevels = tex.get_exact_mipmap_count();
 		return shared_resource_view_desc;
-	}
-	if (tex.dimension() == 3)
-	{
+	case rsx::texture_dimension_extended::texture_dimension_cubemap:
+		shared_resource_view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+		shared_resource_view_desc.TextureCube.MipLevels = tex.get_exact_mipmap_count();
+		return shared_resource_view_desc;
+	case rsx::texture_dimension_extended::texture_dimension_3d:
 		shared_resource_view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-		shared_resource_view_desc.Texture3D.MipLevels = tex.mipmap();
+		shared_resource_view_desc.Texture3D.MipLevels = tex.get_exact_mipmap_count();
 		return shared_resource_view_desc;
 	}
-	throw EXCEPTION("Wrong texture dimension %d", tex.dimension());
+	throw EXCEPTION("Wrong texture dimension");
 }
 }
 
@@ -215,7 +175,7 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 			continue;
 		m_textures_dirty[i] = false;
 
-		if (!textures[i].enabled())
+		if (!rsx::method_registers.fragment_textures[i].enabled())
 		{
 			// Now fill remaining texture slots with dummy texture/sampler
 
@@ -246,13 +206,13 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 
 			continue;
 		}
-		size_t w = textures[i].width(), h = textures[i].height();
+		size_t w = rsx::method_registers.fragment_textures[i].width(), h = rsx::method_registers.fragment_textures[i].height();
 //		if (!w || !h) continue;
 
-		const u32 texaddr = rsx::get_address(textures[i].offset(), textures[i].location());
+		const u32 texaddr = rsx::get_address(rsx::method_registers.fragment_textures[i].offset(), rsx::method_registers.fragment_textures[i].location());
 
-		const u8 format = textures[i].format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
-		bool is_swizzled = !(textures[i].format() & CELL_GCM_TEXTURE_LN);
+		const u8 format = rsx::method_registers.fragment_textures[i].format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
+		bool is_swizzled = !(rsx::method_registers.fragment_textures[i].format() & CELL_GCM_TEXTURE_LN);
 
 		ID3D12Resource *vram_texture;
 		std::pair<texture_entry, ComPtr<ID3D12Resource> > *cached_texture = m_texture_cache.find_data_if_available(texaddr);
@@ -266,12 +226,13 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 		{
 			is_depth_stencil_texture = true;
 		}
-		else if (cached_texture != nullptr && (cached_texture->first == texture_entry(format, w, h, textures[i].depth(), textures[i].mipmap())))
+		else if (cached_texture != nullptr && (cached_texture->first == texture_entry(format, w, h, rsx::method_registers.fragment_textures[i].depth(), rsx::method_registers.fragment_textures[i].get_exact_mipmap_count())))
 		{
 			if (cached_texture->first.m_is_dirty)
 			{
-				update_existing_texture(textures[i], command_list, m_buffer_data, cached_texture->second.Get());
-				m_texture_cache.protect_data(texaddr, texaddr, get_texture_size(textures[i]));
+				command_list->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(cached_texture->second.Get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST));
+				update_existing_texture(rsx::method_registers.fragment_textures[i], command_list, m_buffer_data, cached_texture->second.Get());
+				m_texture_cache.protect_data(texaddr, texaddr, get_texture_size(rsx::method_registers.fragment_textures[i]));
 			}
 			vram_texture = cached_texture->second.Get();
 		}
@@ -279,25 +240,43 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 		{
 			if (cached_texture != nullptr)
 				get_current_resource_storage().dirty_textures.push_back(m_texture_cache.remove_from_cache(texaddr));
-			ComPtr<ID3D12Resource> tex = upload_single_texture(textures[i], m_device.Get(), command_list, m_buffer_data);
+			ComPtr<ID3D12Resource> tex = upload_single_texture(rsx::method_registers.fragment_textures[i], m_device.Get(), command_list, m_buffer_data);
 			std::wstring name = L"texture_@" + std::to_wstring(texaddr);
 			tex->SetName(name.c_str());
 			vram_texture = tex.Get();
-			m_texture_cache.store_and_protect_data(texaddr, texaddr, get_texture_size(textures[i]), format, w, h, textures[i].depth(), textures[i].mipmap(), tex);
+			m_texture_cache.store_and_protect_data(texaddr, texaddr, get_texture_size(rsx::method_registers.fragment_textures[i]), format, w, h, rsx::method_registers.fragment_textures[i].depth(), rsx::method_registers.fragment_textures[i].get_exact_mipmap_count(), tex);
 		}
 
-		D3D12_SHADER_RESOURCE_VIEW_DESC shared_resource_view_desc = get_srv_descriptor_with_dimensions(textures[i]);
+		D3D12_SHADER_RESOURCE_VIEW_DESC shared_resource_view_desc = get_srv_descriptor_with_dimensions(rsx::method_registers.fragment_textures[i]);
 		shared_resource_view_desc.Format = get_texture_format(format);
 
 		switch (format)
 		{
-		case CELL_GCM_TEXTURE_COMPRESSED_HILO8:
-		case CELL_GCM_TEXTURE_COMPRESSED_HILO_S8:
-		case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
-		case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
 		default:
-			LOG_ERROR(RSX, "Unimplemented Texture format : 0x%x", format);
+			LOG_ERROR(RSX, "Unimplemented mapping for texture format: 0x%x", format);
 			break;
+		
+		case CELL_GCM_TEXTURE_COMPRESSED_HILO8:
+		case CELL_GCM_TEXTURE_COMPRESSED_DXT1:
+		case CELL_GCM_TEXTURE_COMPRESSED_DXT23:
+		case CELL_GCM_TEXTURE_COMPRESSED_DXT45:
+		case CELL_GCM_TEXTURE_DEPTH24_D8:
+		case CELL_GCM_TEXTURE_DEPTH24_D8_FLOAT:
+		case CELL_GCM_TEXTURE_DEPTH16:
+		case CELL_GCM_TEXTURE_DEPTH16_FLOAT:
+		case CELL_GCM_TEXTURE_X32_FLOAT:
+		case CELL_GCM_TEXTURE_W16_Z16_Y16_X16_FLOAT:
+		case CELL_GCM_TEXTURE_W32_Z32_Y32_X32_FLOAT:
+		case CELL_GCM_TEXTURE_R5G5B5A1:
+		case CELL_GCM_TEXTURE_D1R5G5B5:
+		case CELL_GCM_TEXTURE_A1R5G5B5:
+		case CELL_GCM_TEXTURE_A4R4G4B4:
+		case CELL_GCM_TEXTURE_R5G6B5:
+		case CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
+		case CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			break;
+
 		case CELL_GCM_TEXTURE_B8:
 			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
 				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
@@ -305,20 +284,104 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
 				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0);
 			break;
-		case CELL_GCM_TEXTURE_A1R5G5B5:
-		case CELL_GCM_TEXTURE_A4R4G4B4:
-		case CELL_GCM_TEXTURE_R5G6B5:
-			shared_resource_view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+		case CELL_GCM_TEXTURE_G8B8:
+		{
+			u8 remap_a = rsx::method_registers.fragment_textures[i].remap() & 0x3;
+			u8 remap_r = (rsx::method_registers.fragment_textures[i].remap() >> 2) & 0x3;
+			u8 remap_g = (rsx::method_registers.fragment_textures[i].remap() >> 4) & 0x3;
+			u8 remap_b = (rsx::method_registers.fragment_textures[i].remap() >> 6) & 0x3;
+
+			if (is_render_target)
+			{
+				// ARGB format
+				// Data comes from RTT, stored as RGBA already
+				const int RemapValue[4] =
+				{
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2
+				};
+
+				shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+					RemapValue[remap_r],
+					RemapValue[remap_g],
+					RemapValue[remap_b],
+					RemapValue[remap_a]);
+			}
+			else
+			{
+				// ARGB format
+				// Data comes from RSX mem, stored as ARGB already
+				const int RemapValue[4] =
+				{
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1
+				};
+
+				shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+					RemapValue[remap_r],
+					RemapValue[remap_g],
+					RemapValue[remap_b],
+					RemapValue[remap_a]);
+			}
+
 			break;
+		}
+
+		case CELL_GCM_TEXTURE_R6G5B5: // TODO: Remap it to another format here, so it's not glitched out
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0);
+			break;
+
+		case CELL_GCM_TEXTURE_X16:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0);
+			break;
+
+		case CELL_GCM_TEXTURE_Y16_X16:
+		case CELL_GCM_TEXTURE_COMPRESSED_HILO_S8:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0);
+			break;
+
+		case CELL_GCM_TEXTURE_Y16_X16_FLOAT:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1);
+			break;
+
+		case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
+		case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0);
+			break;
+			
 		case CELL_GCM_TEXTURE_A8R8G8B8:
 		case CELL_GCM_TEXTURE_D8R8G8B8:
 		{
+			u8 remap_a = rsx::method_registers.fragment_textures[i].remap() & 0x3;
+			u8 remap_r = (rsx::method_registers.fragment_textures[i].remap() >> 2) & 0x3;
+			u8 remap_g = (rsx::method_registers.fragment_textures[i].remap() >> 4) & 0x3;
+			u8 remap_b = (rsx::method_registers.fragment_textures[i].remap() >> 6) & 0x3;
 
-
-			u8 remap_a = textures[i].remap() & 0x3;
-			u8 remap_r = (textures[i].remap() >> 2) & 0x3;
-			u8 remap_g = (textures[i].remap() >> 4) & 0x3;
-			u8 remap_b = (textures[i].remap() >> 6) & 0x3;
 			if (is_render_target)
 			{
 				// ARGB format
@@ -367,33 +430,6 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 
 			break;
 		}
-		case CELL_GCM_TEXTURE_COMPRESSED_DXT1:
-		case CELL_GCM_TEXTURE_COMPRESSED_DXT23:
-		case CELL_GCM_TEXTURE_COMPRESSED_DXT45:
-		case CELL_GCM_TEXTURE_G8B8:
-		case CELL_GCM_TEXTURE_R6G5B5:
-		case CELL_GCM_TEXTURE_DEPTH24_D8:
-		case CELL_GCM_TEXTURE_DEPTH24_D8_FLOAT:
-		case CELL_GCM_TEXTURE_DEPTH16:
-		case CELL_GCM_TEXTURE_DEPTH16_FLOAT:
-		case CELL_GCM_TEXTURE_X16:
-		case CELL_GCM_TEXTURE_Y16_X16:
-		case CELL_GCM_TEXTURE_R5G5B5A1:
-		case CELL_GCM_TEXTURE_W16_Z16_Y16_X16_FLOAT:
-		case CELL_GCM_TEXTURE_W32_Z32_Y32_X32_FLOAT:
-		case CELL_GCM_TEXTURE_X32_FLOAT:
-		case CELL_GCM_TEXTURE_D1R5G5B5:
-			shared_resource_view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-			break;
-		case CELL_GCM_TEXTURE_Y16_X16_FLOAT:
-			shared_resource_view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-			break;
-		case CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
-			shared_resource_view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-			break;
-		case CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
-			shared_resource_view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-			break;
 		}
 
 		m_device->CreateShaderResourceView(vram_texture, &shared_resource_view_desc,
@@ -401,20 +437,7 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 			.Offset((UINT)i, m_descriptor_stride_srv_cbv_uav)
 			);
 
-		if (get_current_resource_storage().current_sampler_index + 16 > 2048)
-		{
-			get_current_resource_storage().sampler_descriptors_heap_index = 1;
-			get_current_resource_storage().current_sampler_index = 0;
-
-			ID3D12DescriptorHeap *descriptors[] =
-			{
-				get_current_resource_storage().descriptors_heap.Get(),
-				get_current_resource_storage().sampler_descriptor_heap[get_current_resource_storage().sampler_descriptors_heap_index].Get(),
-			};
-			command_list->SetDescriptorHeaps(2, descriptors);
-		}
-
-		m_device->CreateSampler(&get_sampler_desc(textures[i]),
+		m_device->CreateSampler(&get_sampler_desc(rsx::method_registers.fragment_textures[i]),
 			CD3DX12_CPU_DESCRIPTOR_HANDLE(m_current_sampler_descriptors->GetCPUDescriptorHandleForHeapStart())
 			.Offset((UINT)i, m_descriptor_stride_samplers));
 	}

@@ -13,9 +13,6 @@
 	path = llvm
 	url = https://github.com/llvm-mirror/llvm
 	branch = release_36
-[submodule "minidx9"]
-	path = 3rdparty/minidx9
-	url = https://github.com/hrydgard/minidx9.git
 [submodule "rsx_program_decompiler"]
 	path = rsx_program_decompiler
 	url = https://github.com/RPCS3/rsx_program_decompiler
@@ -25,9 +22,16 @@
 [submodule "libpng"]
 	path = 3rdparty/libpng
 	url = https://github.com/RPCS3/libpng
+	ignore = dirty
 [submodule "Vulkan/glslang"]
 	path = Vulkan/glslang
 	url = https://github.com/KhronosGroup/glslang.git
 [submodule "Vulkan/Vulkan-LoaderAndValidationLayers"]
 	path = Vulkan/Vulkan-LoaderAndValidationLayers
 	url = https://github.com/KhronosGroup/Vulkan-LoaderAndValidationLayers
+[submodule "Utilities/yaml-cpp"]
+	path = Utilities/yaml-cpp
+	url = https://github.com/RPCS3/yaml-cpp
+[submodule "3rdparty/pugixml"]
+	path = 3rdparty/pugixml
+	url = https://github.com/RPCS3/pugixml

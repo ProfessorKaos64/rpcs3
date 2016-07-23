@@ -12,87 +12,6 @@
 
 #pragma comment(lib, "VKstatic.1.lib")
 
-namespace vk
-{
-// TODO: factorize between backends
-class data_heap
-{
-	/**
-	* Does alloc cross get position ?
-	*/
-	template<int Alignement>
-	bool can_alloc(size_t size) const
-	{
-		size_t alloc_size = align(size, Alignement);
-		size_t aligned_put_pos = align(m_put_pos, Alignement);
-		if (aligned_put_pos + alloc_size < m_size)
-		{
-			// range before get
-			if (aligned_put_pos + alloc_size < m_get_pos)
-				return true;
-			// range after get
-			if (aligned_put_pos > m_get_pos)
-				return true;
-			return false;
-		}
-		else
-		{
-			// ..]....[..get..
-			if (aligned_put_pos < m_get_pos)
-				return false;
-			// ..get..]...[...
-			// Actually all resources extending beyond heap space starts at 0
-			if (alloc_size > m_get_pos)
-				return false;
-			return true;
-		}
-	}
-
-	size_t m_size;
-	size_t m_put_pos; // Start of free space
-public:
-	data_heap() = default;
-	~data_heap() = default;
-	data_heap(const data_heap&) = delete;
-	data_heap(data_heap&&) = delete;
-
-	size_t m_get_pos; // End of free space
-
-	void init(size_t heap_size)
-	{
-		m_size = heap_size;
-		m_put_pos = 0;
-		m_get_pos = heap_size - 1;
-	}
-
-	template<int Alignement>
-	size_t alloc(size_t size)
-	{
-		if (!can_alloc<Alignement>(size)) throw EXCEPTION("Working buffer not big enough");
-		size_t alloc_size = align(size, Alignement);
-		size_t aligned_put_pos = align(m_put_pos, Alignement);
-		if (aligned_put_pos + alloc_size < m_size)
-		{
-			m_put_pos = aligned_put_pos + alloc_size;
-			return aligned_put_pos;
-		}
-		else
-		{
-			m_put_pos = alloc_size;
-			return 0;
-		}
-	}
-
-	/**
-	* return current putpos - 1
-	*/
-	size_t get_current_put_pos_minus_one() const
-	{
-		return (m_put_pos - 1 > 0) ? m_put_pos - 1 : m_size - 1;
-	}
-};
-}
-
 class VKGSRender : public GSRender
 {
 private:
@@ -102,10 +21,7 @@ private:
 	vk::glsl::program *m_program;
 	vk::context m_thread_context;
 
-	rsx::surface_info m_surface;
-
-	vk::data_heap m_attrib_ring_info;
-	std::unique_ptr<vk::buffer> m_attrib_buffers;
+	vk::vk_data_heap m_attrib_ring_info;
 	
 	vk::texture_cache m_texture_cache;
 	rsx::vk_render_targets m_rtts;
@@ -126,10 +42,9 @@ private:
 	vk::swap_chain* m_swap_chain;
 	//buffer
 
-	vk::data_heap m_uniform_buffer_ring_info;
-	std::unique_ptr<vk::buffer> m_uniform_buffer;
-	vk::data_heap m_index_buffer_ring_info;
-	std::unique_ptr<vk::buffer> m_index_buffer;
+	vk::vk_data_heap m_uniform_buffer_ring_info;
+	vk::vk_data_heap m_index_buffer_ring_info;
+	vk::vk_data_heap m_texture_upload_buffer_ring_info;
 
 	//Vulkan internals
 	u32 m_current_present_image = 0xFFFF;
@@ -140,8 +55,6 @@ private:
 
 	vk::command_pool m_command_buffer_pool;
 	vk::command_buffer m_command_buffer;
-	bool recording = false;
-	bool dirty_frame = true;
 
 
 	std::array<VkRenderPass, 120> m_render_passes;
@@ -152,9 +65,13 @@ private:
 
 	std::vector<std::unique_ptr<vk::buffer_view> > m_buffer_view_to_clean;
 	std::vector<std::unique_ptr<vk::framebuffer> > m_framebuffer_to_clean;
+	std::vector<std::unique_ptr<vk::sampler> > m_sampler_to_clean;
+
+	u32 m_client_width = 0;
+	u32 m_client_height = 0;
 
 	u32 m_draw_calls = 0;
-	
+	u32 m_used_descriptors = 0;
 	u8 m_draw_buffers_count = 0;
 
 public:
@@ -163,10 +80,9 @@ public:
 
 private:
 	void clear_surface(u32 mask);
-	void execute_command_buffer(bool wait);
-	void begin_command_buffer_recording();
-	void end_command_buffer_recording();
-
+	void close_and_submit_command_buffer(const std::vector<VkSemaphore> &semaphores, VkFence fence);
+	void open_command_buffer();
+	void sync_at_semaphore_release();
 	void prepare_rtts();
 	/// returns primitive topology, is_indexed, index_count, offset in index buffer, index type
 	std::tuple<VkPrimitiveTopology, bool, u32, VkDeviceSize, VkIndexType> upload_vertex_data();

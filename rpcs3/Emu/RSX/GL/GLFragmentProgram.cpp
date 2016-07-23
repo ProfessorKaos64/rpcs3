@@ -35,6 +35,8 @@ void GLFragmentDecompilerThread::insertHeader(std::stringstream & OS)
 	OS << "	mat4 scaleOffsetMat;\n";
 	OS << "	float fog_param0;\n";
 	OS << "	float fog_param1;\n";
+	OS << "	uint alpha_test;\n";
+	OS << "	float alpha_ref;\n";
 	OS << "};\n";
 }
 
@@ -84,9 +86,6 @@ void GLFragmentDecompilerThread::insertConstants(std::stringstream & OS)
 		{
 			std::string samplerType = PT.type;
 			int index = atoi(&PI.name.data()[3]);
-
-			if (m_prog.unnormalized_coords & (1 << index))
-				samplerType = "sampler2DRect";
 
 			OS << "uniform " << samplerType << " " << PI.name << ";" << std::endl;
 		}
@@ -163,6 +162,27 @@ void GLFragmentDecompilerThread::insertMainStart(std::stringstream & OS)
 
 	OS << "	vec4 ssa = gl_FrontFacing ? vec4(1.) : vec4(-1.);\n";
 
+	for (const ParamType& PT : m_parr.params[PF_PARAM_UNIFORM])
+	{
+		if (PT.type != "sampler2D")
+			continue;
+
+		for (const ParamItem& PI : PT.items)
+		{
+			std::string samplerType = PT.type;
+			int index = atoi(&PI.name.data()[3]);
+
+			if (m_prog.unnormalized_coords & (1 << index))
+			{
+				OS << "vec2 tex" << index << "_coord_scale = 1. / textureSize(" << PI.name << ", 0);\n";
+			}
+			else
+			{
+				OS << "vec2 tex" << index << "_coord_scale = vec2(1.);\n";
+			}
+		}
+	}
+
 	// search if there is fogc in inputs
 	for (const ParamType& PT : m_parr.params[PF_PARAM_IN])
 	{
@@ -187,10 +207,14 @@ void GLFragmentDecompilerThread::insertMainEnd(std::stringstream & OS)
 		{ "ocol3", m_ctrl & CELL_GCM_SHADER_CONTROL_32_BITS_EXPORTS ? "r4" : "h8" },
 	};
 
+	std::string first_output_name;
 	for (int i = 0; i < sizeof(table) / sizeof(*table); ++i)
 	{
 		if (m_parr.HasParam(PF_PARAM_NONE, "vec4", table[i].second))
+		{
 			OS << "	" << table[i].first << " = " << table[i].second << ";" << std::endl;
+			if (first_output_name.empty()) first_output_name = table[i].first;
+		}
 	}
 
 	if (m_ctrl & CELL_GCM_SHADER_CONTROL_DEPTH_EXPORT)
@@ -205,6 +229,30 @@ void GLFragmentDecompilerThread::insertMainEnd(std::stringstream & OS)
 		}
 	}
 
+	if (!first_output_name.empty())
+	{
+		switch (m_prog.alpha_func)
+		{
+		case rsx::comparison_function::equal:
+			OS << "	if (bool(alpha_test) && " << first_output_name << ".a != alpha_ref) discard;\n";
+			break;
+		case rsx::comparison_function::not_equal:
+			OS << "	if (bool(alpha_test) && " << first_output_name << ".a == alpha_ref) discard;\n";
+			break;
+		case rsx::comparison_function::less_or_equal:
+			OS << "	if (bool(alpha_test) && " << first_output_name << ".a > alpha_ref) discard;\n";
+			break;
+		case rsx::comparison_function::less:
+			OS << "	if (bool(alpha_test) && " << first_output_name << ".a >= alpha_ref) discard;\n";
+			break;
+		case rsx::comparison_function::greater:
+			OS << "	if (bool(alpha_test) && " << first_output_name << ".a <= alpha_ref) discard;\n";
+			break;
+		case rsx::comparison_function::greater_or_equal:
+			OS << "	if (bool(alpha_test) && " << first_output_name << ".a < alpha_ref) discard;\n";
+			break;
+		}
+	}
 
 	OS << "}" << std::endl;
 }
@@ -288,7 +336,7 @@ void GLFragmentProgram::Compile()
 	id = glCreateShader(GL_FRAGMENT_SHADER);
 
 	const char* str = shader.c_str();
-	const int strlen = gsl::narrow<int>(shader.length());
+	const int strlen = ::narrow<int>(shader.length());
 
 	glShaderSource(id, 1, &str, &strlen);
 	glCompileShader(id);

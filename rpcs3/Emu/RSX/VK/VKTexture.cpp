@@ -4,7 +4,6 @@
 #include "../RSXThread.h"
 #include "../RSXTexture.h"
 #include "../rsx_utils.h"
-#include "../Common/TextureUtils.h"
 #include "VKFormats.h"
 
 namespace vk
@@ -30,14 +29,14 @@ namespace vk
 		return subres;
 	}
 
-	VkImageSubresourceRange default_image_subresource_range()
+	VkImageSubresourceRange get_image_subresource_range(uint32_t base_layer, uint32_t base_mip, uint32_t layer_count, uint32_t level_count, VkImageAspectFlags aspect)
 	{
 		VkImageSubresourceRange subres = {};
-		subres.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		subres.baseArrayLayer = 0;
-		subres.baseMipLevel = 0;
-		subres.layerCount = 1;
-		subres.levelCount = 1;
+		subres.aspectMask = aspect;
+		subres.baseArrayLayer = base_layer;
+		subres.baseMipLevel = base_mip;
+		subres.layerCount = layer_count;
+		subres.levelCount = level_count;
 
 		return subres;
 	}
@@ -62,10 +61,10 @@ namespace vk
 		rgn.dstSubresource = a_dst;
 
 		if (srcLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-			change_image_layout(cmd, src, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, aspect);
+			change_image_layout(cmd, src, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 
 		if (dstLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-			change_image_layout(cmd, dst, dstLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, aspect);
+			change_image_layout(cmd, dst, dstLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 
 		for (u32 mip_level = 0; mip_level < mipmaps; ++mip_level)
 		{
@@ -76,10 +75,10 @@ namespace vk
 		}
 
 		if (srcLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-			change_image_layout(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcLayout, aspect);
+			change_image_layout(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcLayout, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 
 		if (dstLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-			change_image_layout(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstLayout, aspect);
+			change_image_layout(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstLayout, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 	}
 
 	void copy_scaled_image(VkCommandBuffer cmd, VkImage & src, VkImage & dst, VkImageLayout srcLayout, VkImageLayout dstLayout, u32 src_width, u32 src_height, u32 dst_width, u32 dst_height, u32 mipmaps, VkImageAspectFlagBits aspect)
@@ -101,10 +100,10 @@ namespace vk
 		rgn.srcSubresource = a_src;
 
 		if (srcLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-			change_image_layout(cmd, src, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, aspect);
+			change_image_layout(cmd, src, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 
 		if (dstLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-			change_image_layout(cmd, dst, dstLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, aspect);
+			change_image_layout(cmd, dst, dstLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 
 		for (u32 mip_level = 0; mip_level < mipmaps; ++mip_level)
 		{
@@ -115,10 +114,10 @@ namespace vk
 		}
 
 		if (srcLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-			change_image_layout(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcLayout, aspect);
+			change_image_layout(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcLayout, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 
 		if (dstLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-			change_image_layout(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstLayout, aspect);
+			change_image_layout(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstLayout, vk::get_image_subresource_range(0, 0, 1, 1, aspect));
 	}
 
 	void copy_texture(VkCommandBuffer cmd, texture &src, texture &dst, VkImageLayout srcLayout, VkImageLayout dstLayout, u32 width, u32 height, u32 mipmaps, VkImageAspectFlagBits aspect)
@@ -127,6 +126,40 @@ namespace vk
 		VkImage idst = (VkImage)dst;
 		
 		copy_image(cmd, isrc, idst, srcLayout, dstLayout, width, height, mipmaps, aspect);
+	}
+
+	void copy_mipmaped_image_using_buffer(VkCommandBuffer cmd, VkImage dst_image,
+		const std::vector<rsx_subresource_layout> subresource_layout, int format, bool is_swizzled, u16 mipmap_count,
+		vk::vk_data_heap &upload_heap, vk::buffer* upload_buffer)
+	{
+		u32 mipmap_level = 0;
+		u32 block_in_pixel = get_format_block_size_in_texel(format);
+		u8 block_size_in_bytes = get_format_block_size_in_bytes(format);
+		for (const rsx_subresource_layout &layout : subresource_layout)
+		{
+			u32 row_pitch = align(layout.width_in_block * block_size_in_bytes, 256);
+			u32 image_linear_size = row_pitch * layout.height_in_block * layout.depth;
+			size_t offset_in_buffer = upload_heap.alloc<512>(image_linear_size);
+
+			void *mapped_buffer = upload_buffer->map(offset_in_buffer, image_linear_size);
+			gsl::span<gsl::byte> mapped{ (gsl::byte*)mapped_buffer, gsl::narrow<int>(image_linear_size) };
+			upload_texture_subresource(mapped, layout, format, is_swizzled, 256);
+			upload_buffer->unmap();
+
+			VkBufferImageCopy copy_info = {};
+			copy_info.bufferOffset = offset_in_buffer;
+			copy_info.imageExtent.height = layout.height_in_block * block_in_pixel;
+			copy_info.imageExtent.width = layout.width_in_block * block_in_pixel;
+			copy_info.imageExtent.depth = layout.depth;
+			copy_info.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			copy_info.imageSubresource.layerCount = 1;
+			copy_info.imageSubresource.baseArrayLayer = mipmap_level / mipmap_count;
+			copy_info.imageSubresource.mipLevel = mipmap_level % mipmap_count;
+			copy_info.bufferRowLength = block_in_pixel * row_pitch / block_size_in_bytes;
+
+			vkCmdCopyBufferToImage(cmd, upload_buffer->value, dst_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_info);
+			mipmap_level++;
+		}
 	}
 
 	texture::texture(vk::swap_chain_image &img)
@@ -170,7 +203,7 @@ namespace vk
 		view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		view_info.viewType = view_type;
 		view_info.components = swizzle;
-		view_info.subresourceRange = default_image_subresource_range();
+		view_info.subresourceRange = get_image_subresource_range(0, 0, 1, mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
 
 		if (usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
 		{
@@ -254,7 +287,7 @@ namespace vk
 			VkImageTiling tiling = m_tiling;
 
 			destroy();
-			create(dev, format, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_CUBE, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, usage, tiling, tex.width(), tex.height(), tex.mipmap(), false, default_component_map());
+			create(dev, format, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_CUBE, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, usage, tiling, tex.width(), tex.height(), tex.get_exact_mipmap_count(), false, default_component_map());
 		}
 
 		if (!tex.cubemap() && tex.depth() > 1 && m_view_type != VK_IMAGE_VIEW_TYPE_3D)
@@ -267,7 +300,7 @@ namespace vk
 			VkImageTiling tiling = m_tiling;
 
 			destroy();
-			create(dev, format, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D, 0, usage, tiling, tex.width(), tex.height(), tex.mipmap(), false, default_component_map());
+			create(dev, format, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D, 0, usage, tiling, tex.width(), tex.height(), tex.get_exact_mipmap_count(), false, default_component_map());
 		}
 
 		VkImageSubresource subres = {};
@@ -283,9 +316,9 @@ namespace vk
 
 		if (ignore_checks || props.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)
 		{
-			std::vector<std::pair<u16, VkSubresourceLayout>> layout_alignment(tex.mipmap());
+			std::vector<std::pair<u16, VkSubresourceLayout>> layout_alignment(tex.get_exact_mipmap_count());
 
-			for (u32 i = 0; i < tex.mipmap(); ++i)
+			for (u32 i = 0; i < tex.get_exact_mipmap_count(); ++i)
 			{
 				layout_alignment[i].first = 4096;
 				vkGetImageSubresourceLayout((*owner), m_image_contents, &subres, &layout_alignment[i].second);
@@ -305,7 +338,7 @@ namespace vk
 				subres.mipLevel++;
 			}
 
-			if (tex.mipmap() == 1)
+			if (tex.get_exact_mipmap_count() == 1)
 			{
 				u64 buffer_size = get_placed_texture_storage_size(tex, layout_alignment[0].first, layout_alignment[0].first);
 				if (buffer_size != layout_alignment[0].second.size)
@@ -350,7 +383,7 @@ namespace vk
 				}
 
 				int index= 0;
-				std::vector<std::pair<u64, u32>> layout_offset_info(tex.mipmap());
+				std::vector<std::pair<u64, u32>> layout_offset_info(tex.get_exact_mipmap_count());
 				
 				for (auto &mip_info : layout_offset_info)
 				{
@@ -378,7 +411,7 @@ namespace vk
 			if (!staging_texture)
 			{
 				staging_texture = new texture();
-				staging_texture->create((*owner), m_internal_format, VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_TILING_LINEAR, m_width, m_height, tex.mipmap(), false, default_component_map());
+				staging_texture->create((*owner), m_internal_format, VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_TILING_LINEAR, m_width, m_height, tex.get_exact_mipmap_count(), false, default_component_map());
 			}
 
 			staging_texture->init(tex, cmd, true);
@@ -410,7 +443,7 @@ namespace vk
 	{
 		if (m_layout == new_layout) return;
 
-		vk::change_image_layout(cmd, m_image_contents, m_layout, new_layout, m_image_aspect);
+		vk::change_image_layout(cmd, m_image_contents, m_layout, new_layout, vk::get_image_subresource_range(0, 0, 1, 1, m_image_aspect));
 		m_layout = new_layout;
 	}
 
