@@ -7,11 +7,6 @@ os:
 
 compiler:
  - clang
- - gcc
-
-matrix:
- exclude:
-    compiler: clang
 
 git:
   submodules: false
