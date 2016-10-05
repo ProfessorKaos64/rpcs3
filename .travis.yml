@@ -4,21 +4,12 @@ dist: trusty
 
 os:
  - linux
- - osx
 
 osx_image: xcode6.4
 
 compiler:
  - clang
  - gcc
-
-env:
-  global:
-   - secure: "Vf+FY48nip9JppMnq11105NealdErSWsoUhHo63/V3V+LKfA9guenxCp93/qoSIdSGC/sJwb0yIIMGvkTT/rxDJNh6Z+BWUTb2E0WEIIQbvTJNOSUzoq7dfF1LT61XjVjByFzcbC2xjtaBowmcAYEs1jGUUuEjYVCMmD5lY8hUg="
-   # Which Travis environment to run Coverity on
-   - coverity_scan_run_condition='"$TRAVIS_OS_NAME" = linux -a "$CC" = gcc'
-   # Test mode is for testing if it's working with Coverity. Change to true if testing, to avoid reaching the quota.
-   - coverity_scan_script_test_mode=false
 
 matrix:
  exclude:
@@ -37,6 +28,9 @@ before_install:
       export CXX="g++-5" CC="gcc-5" CXXFLAGS="-Wno-format-security";
       export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01';
     fi;
+  - if [ "$TRAVIS_OS_NAME" = "linux" ] && [ "$CXX" = "clang++-3.8" ]; then
+      export CXX="clang++-3.8" CC="clang-3.8" CXXFLAGS="-Wno-format-security";
+    fi;
 # Add coverall for C++ so coverall.io could be triggered. Even it should be --coverage and gcov.
   - if [ "$TRAVIS_OS_NAME" = "linux" ]; then
       sudo pip install cpp-coveralls requests[security];
@@ -46,7 +40,7 @@ before_install:
     fi;
 
 before_script:
- - git submodule update --init rsx_program_decompiler asmjit 3rdparty/ffmpeg 3rdparty/pugixml 3rdparty/GSL 3rdparty/libpng Utilities/yaml-cpp 3rdparty/cereal
+ - git submodule update --init rsx_program_decompiler asmjit 3rdparty/ffmpeg 3rdparty/pugixml 3rdparty/GSL 3rdparty/libpng Utilities/yaml-cpp
  - mkdir build
  - cd build
  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then cmake ..; else cmake .. -DLLVM_DIR=/usr/local/opt/llvm36/lib/llvm-3.6/share/llvm/cmake; fi
