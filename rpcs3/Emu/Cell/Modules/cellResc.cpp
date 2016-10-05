@@ -83,7 +83,7 @@ s32 cellRescSetSrc(s32 idx, vm::ptr<CellRescSrc> src)
 	return CELL_OK;
 }
 
-s32 cellRescSetConvertAndFlip(PPUThread& ppu, vm::ptr<CellGcmContextData> cntxt, s32 idx)
+s32 cellRescSetConvertAndFlip(ppu_thread& ppu, vm::ptr<CellGcmContextData> cntxt, s32 idx)
 {
 	cellResc.todo("cellRescSetConvertAndFlip(cntxt=*0x%x, idx=0x%x)", cntxt, idx);
 
@@ -147,7 +147,7 @@ void cellRescSetVBlankHandler(vm::ptr<void(u32)> handler)
 
 s32 cellRescCreateInterlaceTable(u32 ea_addr, f32 srcH, CellRescTableElement depth, s32 length)
 {
-	cellResc.todo("cellRescCreateInterlaceTable(ea_addr=0x%x, srcH=%f, depth=%d, length=%d)", ea_addr, srcH, depth, length);
+	cellResc.todo("cellRescCreateInterlaceTable(ea_addr=0x%x, srcH=%f, depth=%d, length=%d)", ea_addr, srcH, (s32)depth, length);
 
 	return CELL_OK;
 }

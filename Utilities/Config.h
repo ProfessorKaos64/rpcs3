@@ -2,6 +2,7 @@
 
 #include "Utilities/types.h"
 #include "Utilities/Atomic.h"
+#include "Utilities/StrFmt.h"
 
 #include <initializer_list>
 #include <exception>
@@ -17,6 +18,12 @@ namespace cfg
 {
 	// Convert string to signed integer
 	bool try_to_int64(s64* out, const std::string& value, s64 min, s64 max);
+
+	// Internal hack
+	bool try_to_enum_value(u64* out, decltype(&fmt_class_string<int>::format) func, const std::string&);
+
+	// Internal hack
+	std::vector<std::string> try_to_enum_list(decltype(&fmt_class_string<int>::format) func);
 
 	// Config tree entry type.
 	enum class type : uint
@@ -62,10 +69,7 @@ namespace cfg
 		}
 
 		// Try to convert from string (optional)
-		virtual bool from_string(const std::string&)
-		{
-			throw std::logic_error("from_string() not specified");
-		}
+		virtual bool from_string(const std::string&);
 
 		// Get string list (optional)
 		virtual std::vector<std::string> to_list() const
@@ -74,10 +78,7 @@ namespace cfg
 		}
 
 		// Set multiple values. Implementation-specific, optional.
-		virtual bool from_list(std::vector<std::string>&&)
-		{
-			throw std::logic_error("from_list() not specified");
-		}
+		virtual bool from_list(std::vector<std::string>&&);
 	};
 
 	// Config tree node which contains another nodes
@@ -179,7 +180,7 @@ namespace cfg
 			for (const auto& v : init)
 			{
 				// Ensure elements are unique
-				VERIFY(map.emplace(v.first, v.second).second);
+				verify(HERE), map.emplace(v.first, v.second).second;
 			}
 
 			return map;
@@ -216,7 +217,7 @@ namespace cfg
 		}
 
 		map_entry(node& owner, const std::string& name, std::size_t def_index, init_type init)
-			: map_entry(owner, name, def_index < init.size() ? (init.begin() + def_index)->first : throw std::logic_error("Invalid default value index"), init)
+			: map_entry(owner, name, (init.begin() + (def_index < init.size() ? def_index : 0))->first, init)
 		{
 		}
 
@@ -296,26 +297,20 @@ namespace cfg
 
 		std::string to_string() const override
 		{
-			for (std::size_t i = 0; i < sizeof(bijective<T, const char*>::map) / sizeof(bijective_pair<T, const char*>); i++)
-			{
-				if (bijective<T, const char*>::map[i].v1 == m_value)
-				{
-					return bijective<T, const char*>::map[i].v2;
-				}
-			}
-
-			return{}; // TODO: ???
+			std::string result;
+			fmt_class_string<T>::format(result, fmt_unveil<T>::get(m_value));
+			return result; // TODO: ???
 		}
 
 		bool from_string(const std::string& value) override
 		{
-			for (std::size_t i = 0; i < sizeof(bijective<T, const char*>::map) / sizeof(bijective_pair<T, const char*>); i++)
+			u64 result;
+
+			if (try_to_enum_value(&result, &fmt_class_string<T>::format, value))
 			{
-				if (bijective<T, const char*>::map[i].v2 == value)
-				{
-					m_value = bijective<T, const char*>::map[i].v1;
-					return true;
-				}
+				// No narrowing check, it's hard to do right there
+				m_value = static_cast<T>(static_cast<std::underlying_type_t<T>>(result));
+				return true;
 			}
 
 			return false;
@@ -323,14 +318,7 @@ namespace cfg
 
 		std::vector<std::string> to_list() const override
 		{
-			std::vector<std::string> result;
-
-			for (std::size_t i = 0; i < sizeof(bijective<T, const char*>::map) / sizeof(bijective_pair<T, const char*>); i++)
-			{
-				result.emplace_back(bijective<T, const char*>::map[i].v2);
-			}
-
-			return result;
+			return try_to_enum_list(&fmt_class_string<T>::format);
 		}
 	};
 
@@ -364,7 +352,7 @@ namespace cfg
 		{
 			if (value < Min || value > Max)
 			{
-				throw fmt::exception("Value out of the valid range: %lld" HERE, s64{ value });
+				fmt::throw_exception("Value out of the valid range: %lld" HERE, s64{ value });
 			}
 
 			m_value = value;

@@ -23,10 +23,8 @@ void lv2_cond_t::notify(lv2_lock_t, cpu_thread* thread)
 	}
 	else
 	{
-		mutex->owner = std::static_pointer_cast<cpu_thread>(thread->shared_from_this());
-
-		VERIFY(!thread->state.test_and_set(cpu_state::signal));
-		(*thread)->notify();
+		mutex->owner = idm::get<ppu_thread>(thread->id);
+		thread->set_signal();
 	}
 }
 
@@ -51,7 +49,7 @@ s32 sys_cond_create(vm::ptr<u32> cond_id, u32 mutex_id, vm::ptr<sys_cond_attribu
 
 	if (!++mutex->cond_count)
 	{
-		throw EXCEPTION("Unexpected cond_count");
+		fmt::throw_exception("Unexpected cond_count" HERE);
 	}
 
 	*cond_id = idm::make<lv2_cond_t>(mutex, attr->name_u64);
@@ -79,7 +77,7 @@ s32 sys_cond_destroy(u32 cond_id)
 
 	if (!cond->mutex->cond_count--)
 	{
-		throw EXCEPTION("Unexpected cond_count");
+		fmt::throw_exception("Unexpected cond_count" HERE);
 	}
 
 	idm::remove<lv2_cond_t>(cond_id);
@@ -165,7 +163,7 @@ s32 sys_cond_signal_to(u32 cond_id, u32 thread_id)
 	return CELL_OK;
 }
 
-s32 sys_cond_wait(PPUThread& ppu, u32 cond_id, u64 timeout)
+s32 sys_cond_wait(ppu_thread& ppu, u32 cond_id, u64 timeout)
 {
 	sys_cond.trace("sys_cond_wait(cond_id=0x%x, timeout=%lld)", cond_id, timeout);
 
@@ -198,7 +196,7 @@ s32 sys_cond_wait(PPUThread& ppu, u32 cond_id, u64 timeout)
 	// potential mutex waiter (not added immediately)
 	sleep_entry<cpu_thread> mutex_waiter(cond->mutex->sq, ppu, defer_sleep);
 
-	while (!ppu.state.test_and_reset(cpu_state::signal))
+	while (!ppu.state.test_and_reset(cpu_flag::signal))
 	{
 		CHECK_EMU_STATUS;
 
@@ -212,7 +210,7 @@ s32 sys_cond_wait(PPUThread& ppu, u32 cond_id, u64 timeout)
 				// try to reown mutex and exit if timed out
 				if (!cond->mutex->owner)
 				{
-					cond->mutex->owner = std::static_pointer_cast<cpu_thread>(ppu.shared_from_this());
+					cond->mutex->owner = idm::get<ppu_thread>(ppu.id);
 					break;
 				}
 
@@ -233,7 +231,7 @@ s32 sys_cond_wait(PPUThread& ppu, u32 cond_id, u64 timeout)
 	// mutex owner is restored after notification or unlocking
 	if (cond->mutex->owner.get() != &ppu)
 	{
-		throw EXCEPTION("Unexpected mutex owner");
+		fmt::throw_exception("Unexpected mutex owner" HERE);
 	}
 
 	// restore the recursive value

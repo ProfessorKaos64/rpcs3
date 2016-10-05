@@ -10,12 +10,15 @@
 
 extern cfg::bool_entry g_cfg_audio_convert_to_u16;
 
+static thread_local HMODULE s_tls_xaudio2_lib{};
 static thread_local IXAudio2* s_tls_xaudio2_instance{};
 static thread_local IXAudio2MasteringVoice* s_tls_master_voice{};
 static thread_local IXAudio2SourceVoice* s_tls_source_voice{};
 
-void XAudio2Thread::xa27_init()
+void XAudio2Thread::xa27_init(void* lib2_7)
 {
+	s_tls_xaudio2_lib = (HMODULE)lib2_7;
+
 	HRESULT hr = S_OK;
 
 	hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -34,15 +37,13 @@ void XAudio2Thread::xa27_init()
 		return;
 	}
 
-	hr = s_tls_xaudio2_instance->CreateMasteringVoice(&s_tls_master_voice);
+	hr = s_tls_xaudio2_instance->CreateMasteringVoice(&s_tls_master_voice, 8, 48000);
 	if (FAILED(hr))
 	{
 		LOG_ERROR(GENERAL, "XAudio2Thread : CreateMasteringVoice() failed(0x%08x)", (u32)hr);
 		s_tls_xaudio2_instance->Release();
 		Emu.Pause();
 	}
-
-	LOG_SUCCESS(GENERAL, "XAudio 2.7 initialized");
 }
 
 void XAudio2Thread::xa27_destroy()
@@ -65,6 +66,8 @@ void XAudio2Thread::xa27_destroy()
 	}
 
 	CoUninitialize();
+
+	FreeLibrary(s_tls_xaudio2_lib);
 }
 
 void XAudio2Thread::xa27_play()
@@ -126,6 +129,17 @@ void XAudio2Thread::xa27_open()
 
 void XAudio2Thread::xa27_add(const void* src, int size)
 {
+	XAUDIO2_VOICE_STATE state;
+	s_tls_source_voice->GetState(&state);
+
+	// XAudio 2.7 bug workaround, when it says "SimpList: non-growable list ran out of room for new elements" and hits int 3
+	if (state.BuffersQueued > 32)
+	{
+		LOG_WARNING(GENERAL, "XAudio2Thread : too many buffers enqueued (%d, pos=%u)", state.BuffersQueued, state.SamplesPlayed);
+
+		return xa27_flush();
+	}
+
 	XAUDIO2_BUFFER buffer;
 
 	buffer.AudioBytes = size;

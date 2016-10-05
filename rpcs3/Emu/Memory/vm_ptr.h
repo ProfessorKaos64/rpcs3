@@ -2,7 +2,7 @@
 
 #include "vm_ref.h"
 
-class PPUThread;
+class ppu_thread;
 class ARMv7Thread;
 
 namespace vm
@@ -170,7 +170,7 @@ namespace vm
 
 		// Pointer difference operator
 		template<typename T2, typename AT2>
-		std::enable_if_t<std::is_object<T2>::value && std::is_same<CV T, CV T2>::value, s32> operator -(const _ptr_base<T2, AT2>& right) const
+		std::enable_if_t<std::is_object<T2>::value && std::is_same<std::decay_t<T>, std::decay_t<T2>>::value, s32> operator -(const _ptr_base<T2, AT2>& right) const
 		{
 			return static_cast<s32>(vm::cast(m_addr, HERE) - vm::cast(right.m_addr, HERE)) / SIZE_32(T);
 		}
@@ -264,7 +264,7 @@ namespace vm
 		}
 
 		// Callback; defined in PPUCallback.h, passing context is mandatory
-		RT operator()(PPUThread& ppu, T... args) const;
+		RT operator()(ppu_thread& ppu, T... args) const;
 
 		// Callback; defined in ARMv7Callback.h, passing context is mandatory
 		RT operator()(ARMv7Thread& cpu, T... args) const;
@@ -492,10 +492,36 @@ struct to_se<vm::_ptr_base<T, AT>, Se>
 
 // Format pointer
 template<typename T, typename AT>
-struct unveil<vm::_ptr_base<T, AT>, void>
+struct fmt_unveil<vm::_ptr_base<T, AT>, void>
 {
+	using type = vm::_ptr_base<T>; // Use only T, ignoring AT
+
 	static inline auto get(const vm::_ptr_base<T, AT>& arg)
 	{
-		return unveil<AT>::get(arg.addr());
+		return fmt_unveil<AT>::get(arg.addr());
 	}
+};
+
+template<>
+struct fmt_class_string<vm::_ptr_base<const void>, void>
+{
+	static void format(std::string& out, u64 arg);
+};
+
+template<typename T>
+struct fmt_class_string<vm::_ptr_base<T>, void> : fmt_class_string<vm::_ptr_base<const void>, void>
+{
+	// Classify all pointers as const void*
+};
+
+template<>
+struct fmt_class_string<vm::_ptr_base<const char>, void>
+{
+	static void format(std::string& out, u64 arg);
+};
+
+template<>
+struct fmt_class_string<vm::_ptr_base<char>, void> : fmt_class_string<vm::_ptr_base<const char>>
+{
+	// Classify char* as const char*
 };

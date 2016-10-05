@@ -14,11 +14,11 @@
 
 #include "asmjit.h"
 
-#define SPU_OFF_128(x) asmjit::host::oword_ptr(*cpu, OFFSET_32(SPUThread, x))
-#define SPU_OFF_64(x) asmjit::host::qword_ptr(*cpu, OFFSET_32(SPUThread, x))
-#define SPU_OFF_32(x) asmjit::host::dword_ptr(*cpu, OFFSET_32(SPUThread, x))
-#define SPU_OFF_16(x) asmjit::host::word_ptr(*cpu, OFFSET_32(SPUThread, x))
-#define SPU_OFF_8(x) asmjit::host::byte_ptr(*cpu, OFFSET_32(SPUThread, x))
+#define SPU_OFF_128(x) asmjit::host::oword_ptr(*cpu, (std::conditional_t<sizeof(SPUThread::x) == 16, u32, void>)OFFSET_32(SPUThread, x))
+#define SPU_OFF_64(x) asmjit::host::qword_ptr(*cpu, (std::conditional_t<sizeof(SPUThread::x) == 8, u32, void>)OFFSET_32(SPUThread, x))
+#define SPU_OFF_32(x) asmjit::host::dword_ptr(*cpu, (std::conditional_t<sizeof(SPUThread::x) == 4, u32, void>)OFFSET_32(SPUThread, x))
+#define SPU_OFF_16(x) asmjit::host::word_ptr(*cpu, (std::conditional_t<sizeof(SPUThread::x) == 2, u32, void>)OFFSET_32(SPUThread, x))
+#define SPU_OFF_8(x) asmjit::host::byte_ptr(*cpu, (std::conditional_t<sizeof(SPUThread::x) == 1, u32, void>)OFFSET_32(SPUThread, x))
 
 const spu_decoder<spu_interpreter_fast> s_spu_interpreter; // TODO: remove
 const spu_decoder<spu_recompiler> s_spu_decoder;
@@ -46,7 +46,7 @@ void spu_recompiler::compile(spu_function_t& f)
 
 	if (f.addr >= 0x40000 || f.addr % 4 || f.size == 0 || f.size > 0x40000 - f.addr || f.size % 4)
 	{
-		throw EXCEPTION("Invalid SPU function (addr=0x%05x, size=0x%x)", f.addr, f.size);
+		fmt::throw_exception("Invalid SPU function (addr=0x%05x, size=0x%x)" HERE, f.addr, f.size);
 	}
 
 	using namespace asmjit;
@@ -104,7 +104,7 @@ void spu_recompiler::compile(spu_function_t& f)
 	{
 		if (addr < f.addr || addr >= f.addr + f.size || addr % 4)
 		{
-			throw EXCEPTION("Invalid function block entry (0x%05x)", addr);
+			fmt::throw_exception("Invalid function block entry (0x%05x)" HERE, addr);
 		}
 
 		pos_labels[addr / 4] = compiler.newLabel();
@@ -121,7 +121,7 @@ void spu_recompiler::compile(spu_function_t& f)
 	{
 		if (addr < f.addr || addr >= f.addr + f.size || addr % 4)
 		{
-			throw EXCEPTION("Invalid jump table entry (0x%05x)", addr);
+			fmt::throw_exception("Invalid jump table entry (0x%05x)" HERE, addr);
 		}
 	}
 
@@ -226,7 +226,7 @@ spu_recompiler::XmmLink spu_recompiler::XmmAlloc() // get empty xmm register
 		if (v) return{ v };
 	}
 
-	throw EXCEPTION("Out of Xmm Vars");
+	fmt::throw_exception("Out of Xmm Vars" HERE);
 }
 
 spu_recompiler::XmmLink spu_recompiler::XmmGet(s8 reg, XmmType type) // get xmm register with specific SPU reg
@@ -238,7 +238,7 @@ spu_recompiler::XmmLink spu_recompiler::XmmGet(s8 reg, XmmType type) // get xmm 
 	case XmmType::Int: c->movdqa(result, SPU_OFF_128(gpr[reg])); break;
 	case XmmType::Float: c->movaps(result, SPU_OFF_128(gpr[reg])); break;
 	case XmmType::Double: c->movapd(result, SPU_OFF_128(gpr[reg])); break;
-	default: throw EXCEPTION("Invalid XmmType");
+	default: fmt::throw_exception("Invalid XmmType" HERE);
 	}
 
 	return result;
@@ -269,7 +269,7 @@ void spu_recompiler::InterpreterCall(spu_opcode_t op)
 
 			const u32 old_pc = _spu->pc;
 
-			if (_spu->state.load() && _spu->check_status())
+			if (test(_spu->state) && _spu->check_state())
 			{
 				return 0x2000000 | _spu->pc;
 			}
@@ -319,7 +319,7 @@ void spu_recompiler::FunctionCall()
 			{
 				if (_spu->pc & 0x8000000)
 				{
-					throw EXCEPTION("Undefined behaviour");
+					fmt::throw_exception("Undefined behaviour" HERE);
 				}
 
 				_spu->set_interrupt_status(true);
@@ -340,12 +340,12 @@ void spu_recompiler::FunctionCall()
 				LOG_ERROR(SPU, "Branch-to-self");
 			}
 
-			while (!_spu->state.load() || !_spu->check_status())
+			while (!test(_spu->state) || !_spu->check_state())
 			{
 				// Proceed recursively
 				spu_recompiler_base::enter(*_spu);
 
-				if (_spu->state & cpu_state::ret)
+				if (test(_spu->state & cpu_flag::ret))
 				{
 					break;
 				}
@@ -917,12 +917,12 @@ void spu_recompiler::BISL(spu_opcode_t op)
 
 void spu_recompiler::IRET(spu_opcode_t op)
 {
-	throw EXCEPTION("Unimplemented instruction");
+	fmt::throw_exception("Unimplemented instruction" HERE);
 }
 
 void spu_recompiler::BISLED(spu_opcode_t op)
 {
-	throw EXCEPTION("Unimplemented instruction");
+	fmt::throw_exception("Unimplemented instruction" HERE);
 }
 
 void spu_recompiler::HBR(spu_opcode_t op)
@@ -1561,7 +1561,7 @@ void spu_recompiler::FCGT(spu_opcode_t op)
 
 void spu_recompiler::DFCGT(spu_opcode_t op)
 {
-	throw EXCEPTION("Unexpected instruction");
+	fmt::throw_exception("Unexpected instruction" HERE);
 }
 
 void spu_recompiler::FA(spu_opcode_t op)
@@ -1619,7 +1619,7 @@ void spu_recompiler::FCMGT(spu_opcode_t op)
 
 void spu_recompiler::DFCMGT(spu_opcode_t op)
 {
-	throw EXCEPTION("Unexpected instruction");
+	fmt::throw_exception("Unexpected instruction" HERE);
 }
 
 void spu_recompiler::DFA(spu_opcode_t op)
@@ -1841,7 +1841,7 @@ void spu_recompiler::FSCRWR(spu_opcode_t op)
 
 void spu_recompiler::DFTSV(spu_opcode_t op)
 {
-	throw EXCEPTION("Unexpected instruction");
+	fmt::throw_exception("Unexpected instruction" HERE);
 }
 
 void spu_recompiler::FCEQ(spu_opcode_t op)
@@ -1854,7 +1854,7 @@ void spu_recompiler::FCEQ(spu_opcode_t op)
 
 void spu_recompiler::DFCEQ(spu_opcode_t op)
 {
-	throw EXCEPTION("Unexpected instruction");
+	fmt::throw_exception("Unexpected instruction" HERE);
 }
 
 void spu_recompiler::MPY(spu_opcode_t op)
@@ -1919,7 +1919,7 @@ void spu_recompiler::FCMEQ(spu_opcode_t op)
 
 void spu_recompiler::DFCMEQ(spu_opcode_t op)
 {
-	throw EXCEPTION("Unexpected instruction");
+	fmt::throw_exception("Unexpected instruction" HERE);
 }
 
 void spu_recompiler::MPYU(spu_opcode_t op)
@@ -2020,7 +2020,7 @@ void spu_recompiler::BRZ(spu_opcode_t op)
 {
 	const u32 target = spu_branch_target(m_pos, op.i16);
 
-	if (target == m_pos) throw EXCEPTION("Branch-to-self (0x%05x)", target);
+	if (target == m_pos) fmt::throw_exception("Branch-to-self (0x%05x)" HERE, target);
 
 	c->cmp(SPU_OFF_32(gpr[op.rt]._u32[3]), 0);
 
@@ -2052,7 +2052,7 @@ void spu_recompiler::BRNZ(spu_opcode_t op)
 {
 	const u32 target = spu_branch_target(m_pos, op.i16);
 
-	if (target == m_pos) throw EXCEPTION("Branch-to-self (0x%05x)", target);
+	if (target == m_pos) fmt::throw_exception("Branch-to-self (0x%05x)" HERE, target);
 
 	c->cmp(SPU_OFF_32(gpr[op.rt]._u32[3]), 0);
 
@@ -2077,7 +2077,7 @@ void spu_recompiler::BRHZ(spu_opcode_t op)
 {
 	const u32 target = spu_branch_target(m_pos, op.i16);
 
-	if (target == m_pos) throw EXCEPTION("Branch-to-self (0x%05x)", target);
+	if (target == m_pos) fmt::throw_exception("Branch-to-self (0x%05x)" HERE, target);
 
 	c->cmp(SPU_OFF_16(gpr[op.rt]._u16[6]), 0);
 
@@ -2102,7 +2102,7 @@ void spu_recompiler::BRHNZ(spu_opcode_t op)
 {
 	const u32 target = spu_branch_target(m_pos, op.i16);
 
-	if (target == m_pos) throw EXCEPTION("Branch-to-self (0x%05x)", target);
+	if (target == m_pos) fmt::throw_exception("Branch-to-self (0x%05x)" HERE, target);
 
 	c->cmp(SPU_OFF_16(gpr[op.rt]._u16[6]), 0);
 
@@ -2134,7 +2134,7 @@ void spu_recompiler::BRA(spu_opcode_t op)
 {
 	const u32 target = spu_branch_target(0, op.i16);
 
-	if (target == m_pos) throw EXCEPTION("Branch-to-self (0x%05x)", target);
+	if (target == m_pos) fmt::throw_exception("Branch-to-self (0x%05x)" HERE, target);
 
 	if (labels[target / 4].isInitialized())
 	{
@@ -2165,7 +2165,7 @@ void spu_recompiler::BRASL(spu_opcode_t op)
 {
 	const u32 target = spu_branch_target(0, op.i16);
 
-	if (target == m_pos) throw EXCEPTION("Branch-to-self (0x%05x)", target);
+	if (target == m_pos) fmt::throw_exception("Branch-to-self (0x%05x)" HERE, target);
 
 	const XmmLink& vr = XmmAlloc();
 	c->movdqa(vr, XmmConst(_mm_set_epi32(spu_branch_target(m_pos + 4), 0, 0, 0)));
@@ -2186,7 +2186,7 @@ void spu_recompiler::BR(spu_opcode_t op)
 		c->mov(*addr, target | 0x2000000);
 		//c->cmp(asmjit::host::dword_ptr(*ls, m_pos), 0x32); // compare instruction opcode with BR-to-self
 		//c->je(labels[target / 4]);
-		c->lock().or_(SPU_OFF_16(state), make_bitset(cpu_state::stop, cpu_state::ret)._value());
+		c->lock().or_(SPU_OFF_32(state), static_cast<u32>(cpu_flag::stop + cpu_flag::ret));
 		c->jmp(*end);
 		c->unuse(*addr);
 		return;
@@ -2220,7 +2220,7 @@ void spu_recompiler::BRSL(spu_opcode_t op)
 {
 	const u32 target = spu_branch_target(m_pos, op.i16);
 
-	if (target == m_pos) throw EXCEPTION("Branch-to-self (0x%05x)", target);
+	if (target == m_pos) fmt::throw_exception("Branch-to-self (0x%05x)" HERE, target);
 
 	const XmmLink& vr = XmmAlloc();
 	c->movdqa(vr, XmmConst(_mm_set_epi32(spu_branch_target(m_pos + 4), 0, 0, 0)));

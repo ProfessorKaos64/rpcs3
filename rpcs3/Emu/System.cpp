@@ -25,6 +25,8 @@
 
 #include <thread>
 
+system_type g_system;
+
 cfg::bool_entry g_cfg_autostart(cfg::root.misc, "Always start after boot", true);
 cfg::bool_entry g_cfg_autoexit(cfg::root.misc, "Exit RPCS3 when process finishes");
 
@@ -41,8 +43,6 @@ cfg::bool_entry g_cfg_vfs_allow_host_root(cfg::root.vfs, "Enable /host_root/", t
 std::string g_cfg_defaults;
 
 extern atomic_t<u32> g_thread_count;
-
-extern atomic_t<u32> g_ppu_core[2];
 
 extern u64 get_system_time();
 
@@ -64,7 +64,6 @@ namespace rpcs3
 Emulator::Emulator()
 	: m_status(Stopped)
 	, m_cpu_thr_stop(0)
-	, m_callback_manager(new CallbackManager())
 {
 }
 
@@ -77,9 +76,6 @@ void Emulator::Init()
 	
 	idm::init();
 	fxm::init();
-
-	g_ppu_core[0] = 0;
-	g_ppu_core[1] = 0;
 
 	// Reset defaults, cache them
 	cfg::root.from_default();
@@ -214,6 +210,7 @@ void Emulator::Load()
 		else if (ppu_exec.open(elf_file) == elf_error::ok)
 		{
 			// PS3 executable
+			g_system = system_type::ps3;
 			m_status = Ready;
 			vm::ps3::init();
 
@@ -277,20 +274,20 @@ void Emulator::Load()
 
 			ppu_load_exec(ppu_exec);
 
-			Emu.GetCallbackManager().Init();
-			fxm::import<GSRender>(PURE_EXPR(Emu.GetCallbacks().get_gs_render())); // TODO: must be created in appropriate sys_rsx syscall
+			fxm::import<GSRender>(Emu.GetCallbacks().get_gs_render); // TODO: must be created in appropriate sys_rsx syscall
 		}
 		else if (ppu_prx.open(elf_file) == elf_error::ok)
 		{
 			// PPU PRX (experimental)
+			g_system = system_type::ps3;
 			m_status = Ready;
 			vm::ps3::init();
 			ppu_load_prx(ppu_prx);
-			GetCallbackManager().Init();
 		}
 		else if (spu_exec.open(elf_file) == elf_error::ok)
 		{
 			// SPU executable (experimental)
+			g_system = system_type::ps3;
 			m_status = Ready;
 			vm::ps3::init();
 			spu_load_exec(spu_exec);
@@ -298,6 +295,7 @@ void Emulator::Load()
 		else if (arm_exec.open(elf_file) == elf_error::ok)
 		{
 			// ARMv7 executable
+			g_system = system_type::psv;
 			m_status = Ready;
 			vm::psv::init();
 			arm_load_exec(arm_exec);
@@ -348,10 +346,9 @@ void Emulator::Run()
 	m_pause_amend_time = 0;
 	m_status = Running;
 
-	idm::select<PPUThread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
+	idm::select<ppu_thread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
 	{
-		cpu.state -= cpu_state::stop;
-		cpu->lock_notify();
+		cpu.run();
 	});
 
 	SendDbgCommand(DID_STARTED_EMU);
@@ -377,9 +374,9 @@ bool Emulator::Pause()
 
 	SendDbgCommand(DID_PAUSE_EMU);
 
-	idm::select<PPUThread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
+	idm::select<ppu_thread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
 	{
-		cpu.state += cpu_state::dbg_global_pause;
+		cpu.state += cpu_flag::dbg_global_pause;
 	});
 
 	SendDbgCommand(DID_PAUSED_EMU);
@@ -411,10 +408,10 @@ void Emulator::Resume()
 
 	SendDbgCommand(DID_RESUME_EMU);
 
-	idm::select<PPUThread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
+	idm::select<ppu_thread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
 	{
-		cpu.state -= cpu_state::dbg_global_pause;
-		cpu->lock_notify();
+		cpu.state -= cpu_flag::dbg_global_pause;
+		cpu.lock_notify();
 	});
 
 	rpcs3::on_resume()();
@@ -437,9 +434,9 @@ void Emulator::Stop()
 	{
 		LV2_LOCK;
 
-		idm::select<PPUThread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
+		idm::select<ppu_thread, SPUThread, RawSPUThread, ARMv7Thread>([](u32, cpu_thread& cpu)
 		{
-			cpu.state += cpu_state::dbg_global_stop;
+			cpu.state += cpu_flag::dbg_global_stop;
 			cpu->lock();
 			cpu->set_exception(std::make_exception_ptr(EmulationStopped()));
 			cpu->unlock();
@@ -463,8 +460,6 @@ void Emulator::Stop()
 
 	LOG_NOTICE(GENERAL, "Objects cleared...");
 
-	GetCallbackManager().Clear();
-
 	RSXIOMem.Clear();
 	vm::close();
 
@@ -478,6 +473,52 @@ void Emulator::Stop()
 	{
 		Init();
 	}
+}
+
+s32 error_code::error_report(const fmt_type_info* sup, u64 arg)
+{
+	std::string out;
+
+	if (auto thread = get_current_cpu_thread())
+	{
+		if (g_system == system_type::ps3 && thread->id >= ppu_thread::id_min)
+		{
+			if (auto func = static_cast<ppu_thread*>(thread)->last_function)
+			{
+				out += "'";
+				out += func;
+				out += "'";
+			}			
+		}
+
+		if (g_system == system_type::psv)
+		{
+			if (auto func = static_cast<ARMv7Thread*>(thread)->last_function)
+			{
+				out += "'";
+				out += func;
+				out += "'";
+			}
+		}
+	}
+
+	if (out.empty())
+	{
+		fmt::append(out, "Unknown function failed with 0x%08x", arg);
+	}
+	else
+	{
+		fmt::append(out, " failed with 0x%08x", arg);
+	}
+	
+	if (sup)
+	{
+		fmt::raw_append(out, " : %s", sup, fmt_args_t<void>{arg});
+	}
+
+	LOG_ERROR(GENERAL, "%s", out);
+
+	return static_cast<s32>(arg);
 }
 
 Emulator Emu;

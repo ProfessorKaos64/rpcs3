@@ -8,6 +8,19 @@
 #include "D3D12Formats.h"
 #include "../rsx_methods.h"
 
+bool is_dxtc_format(u32 texture_format)
+{
+	switch (texture_format)
+	{
+	case CELL_GCM_TEXTURE_COMPRESSED_DXT1:
+	case CELL_GCM_TEXTURE_COMPRESSED_DXT23:
+	case CELL_GCM_TEXTURE_COMPRESSED_DXT45:
+		return true;
+	default:
+		return false;
+	}
+}
+
 namespace
 {
 D3D12_COMPARISON_FUNC get_sampler_compare_func[] =
@@ -22,7 +35,7 @@ D3D12_COMPARISON_FUNC get_sampler_compare_func[] =
 	D3D12_COMPARISON_FUNC_ALWAYS
 };
 
-D3D12_SAMPLER_DESC get_sampler_desc(const rsx::texture &texture)
+D3D12_SAMPLER_DESC get_sampler_desc(const rsx::fragment_texture &texture)
 {
 	D3D12_SAMPLER_DESC samplerDesc = {};
 	samplerDesc.Filter = get_texture_filter(texture.min_filter(), texture.mag_filter());
@@ -43,23 +56,34 @@ D3D12_SAMPLER_DESC get_sampler_desc(const rsx::texture &texture)
 
 namespace
 {
-	CD3DX12_RESOURCE_DESC get_texture_description(const rsx::texture &texture)
+	CD3DX12_RESOURCE_DESC get_texture_description(const rsx::fragment_texture &texture)
 	{
 		const u8 format = texture.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
 		DXGI_FORMAT dxgi_format = get_texture_format(format);
+		u16 width = texture.width();
+		u16 height = texture.height();
+		u16 depth = texture.depth();
+		u16 miplevels = texture.get_exact_mipmap_count();
+
+		// DXTC uses 4x4 block texture and align to multiple of 4.
+		if (is_dxtc_format(format))
+		{
+			width = align(width, 4);
+			height = align(height, 4);
+		}
 
 		switch (texture.get_extended_texture_dimension())
 		{
 		case rsx::texture_dimension_extended::texture_dimension_1d:
-			return CD3DX12_RESOURCE_DESC::Tex1D(dxgi_format, texture.width(), 1, texture.get_exact_mipmap_count());
+			return CD3DX12_RESOURCE_DESC::Tex1D(dxgi_format, width, 1, miplevels);
 		case rsx::texture_dimension_extended::texture_dimension_2d:
-			return CD3DX12_RESOURCE_DESC::Tex2D(dxgi_format, texture.width(), texture.height(), 1, texture.get_exact_mipmap_count());
+			return CD3DX12_RESOURCE_DESC::Tex2D(dxgi_format, width, height, 1, miplevels);
 		case rsx::texture_dimension_extended::texture_dimension_cubemap:
-			return CD3DX12_RESOURCE_DESC::Tex2D(dxgi_format, texture.width(), texture.height(), 6, texture.get_exact_mipmap_count());
+			return CD3DX12_RESOURCE_DESC::Tex2D(dxgi_format, width, height, 6, miplevels);
 		case rsx::texture_dimension_extended::texture_dimension_3d:
-			return CD3DX12_RESOURCE_DESC::Tex3D(dxgi_format, texture.width(), texture.height(), texture.depth(), texture.get_exact_mipmap_count());
+			return CD3DX12_RESOURCE_DESC::Tex3D(dxgi_format, width, height, depth, miplevels);
 		}
-		throw EXCEPTION("Unknown texture dimension");
+		fmt::throw_exception("Unknown texture dimension" HERE);
 	}
 }
 
@@ -68,7 +92,7 @@ namespace {
 	 * Allocate buffer in texture_buffer_heap big enough and upload data into existing_texture which should be in COPY_DEST state
 	 */
 	void update_existing_texture(
-		const rsx::texture &texture,
+		const rsx::fragment_texture &texture,
 		ID3D12GraphicsCommandList *command_list,
 		d3d12_data_heap &texture_buffer_heap,
 		ID3D12Resource *existing_texture)
@@ -83,7 +107,7 @@ namespace {
 		size_t mip_level = 0;
 
 		void *mapped_buffer_ptr = texture_buffer_heap.map<void>(CD3DX12_RANGE(heap_offset, heap_offset + buffer_size));
-		gsl::span<gsl::byte> mapped_buffer{ (gsl::byte*)mapped_buffer_ptr, gsl::narrow<int>(buffer_size) };
+		gsl::span<gsl::byte> mapped_buffer{ (gsl::byte*)mapped_buffer_ptr, ::narrow<int>(buffer_size) };
 		std::vector<rsx_subresource_layout> input_layouts = get_subresources_layout(texture);
 		u8 block_size_in_bytes = get_format_block_size_in_bytes(format);
 		u8 block_size_in_texel = get_format_block_size_in_texel(format);
@@ -121,7 +145,7 @@ namespace {
  * using a temporary texture buffer.
  */
 ComPtr<ID3D12Resource> upload_single_texture(
-	const rsx::texture &texture,
+	const rsx::fragment_texture &texture,
 	ID3D12Device *device,
 	ID3D12GraphicsCommandList *command_list,
 	d3d12_data_heap &texture_buffer_heap)
@@ -141,7 +165,7 @@ ComPtr<ID3D12Resource> upload_single_texture(
 }
 
 
-D3D12_SHADER_RESOURCE_VIEW_DESC get_srv_descriptor_with_dimensions(const rsx::texture &tex)
+D3D12_SHADER_RESOURCE_VIEW_DESC get_srv_descriptor_with_dimensions(const rsx::fragment_texture &tex)
 {
 	D3D12_SHADER_RESOURCE_VIEW_DESC shared_resource_view_desc = {};
 	switch (tex.get_extended_texture_dimension())
@@ -163,7 +187,7 @@ D3D12_SHADER_RESOURCE_VIEW_DESC get_srv_descriptor_with_dimensions(const rsx::te
 		shared_resource_view_desc.Texture3D.MipLevels = tex.get_exact_mipmap_count();
 		return shared_resource_view_desc;
 	}
-	throw EXCEPTION("Wrong texture dimension");
+	fmt::throw_exception("Wrong texture dimension" HERE);
 }
 }
 
@@ -207,7 +231,12 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 			continue;
 		}
 		size_t w = rsx::method_registers.fragment_textures[i].width(), h = rsx::method_registers.fragment_textures[i].height();
-//		if (!w || !h) continue;
+		
+		if (!w || !h)
+		{
+			LOG_ERROR(RSX, "Texture upload requested but invalid texture dimensions passed");
+			continue;
+		}
 
 		const u32 texaddr = rsx::get_address(rsx::method_registers.fragment_textures[i].offset(), rsx::method_registers.fragment_textures[i].location());
 

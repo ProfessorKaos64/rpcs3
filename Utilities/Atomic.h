@@ -1,7 +1,6 @@
 #pragma once
 
 #include "types.h"
-#include "Platform.h"
 
 // Helper class, provides access to compiler-specific atomic intrinsics
 template<typename T, std::size_t Size>
@@ -143,26 +142,38 @@ struct atomic_storage
 		return atomic_storage<T>::sub_fetch(dest, 1);
 	}
 
+	static inline bool test_and_set(T& dest, T mask)
+	{
+		return (atomic_storage<T>::fetch_or(dest, mask) & mask) != 0;
+	}
+
+	static inline bool test_and_reset(T& dest, T mask)
+	{
+		return (atomic_storage<T>::fetch_and(dest, ~mask) & mask) != 0;
+	}
+
+	static inline bool test_and_complement(T& dest, T mask)
+	{
+		return (atomic_storage<T>::fetch_xor(dest, mask) & mask) != 0;
+	}
+
 	static inline bool bts(T& dest, uint bit)
 	{
-		const T mask = static_cast<T>(1) << bit;
-		return (atomic_storage<T>::fetch_or(dest, mask) & mask) != 0;
+		return atomic_storage<T>::test_and_set(dest, static_cast<T>(1) << bit);
 	}
 
 	static inline bool btr(T& dest, uint bit)
 	{
-		const T mask = static_cast<T>(1) << bit;
-		return (atomic_storage<T>::fetch_and(dest, ~mask) & mask) != 0;
+		return atomic_storage<T>::test_and_reset(dest, static_cast<T>(1) << bit);
 	}
 
 	static inline bool btc(T& dest, uint bit)
 	{
-		const T mask = static_cast<T>(1) << bit;
-		return (atomic_storage<T>::fetch_xor(dest, mask) & mask) != 0;
+		return atomic_storage<T>::test_and_complement(dest, static_cast<T>(1) << bit);
 	}
 };
 
-/* The rest: ugly MSVC intrinsics + possibly __asm__ implementations (TODO) */
+/* The rest: ugly MSVC intrinsics + inline asm implementations */
 
 template<typename T>
 struct atomic_storage<T, 1> : atomic_storage<T, 0>
@@ -285,6 +296,27 @@ struct atomic_storage<T, 2> : atomic_storage<T, 0>
 		short r = _InterlockedDecrement16((volatile short*)&dest);
 		return (T&)r;
 	}
+#else
+	static inline bool bts(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btsw %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
+
+	static inline bool btr(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btrw %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
+
+	static inline bool btc(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btcw %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
 #endif
 };
 
@@ -362,6 +394,27 @@ struct atomic_storage<T, 4> : atomic_storage<T, 0>
 	static inline bool btr(T& dest, uint bit)
 	{
 		return _interlockedbittestandreset((volatile long*)&dest, bit) != 0;
+	}
+#else
+	static inline bool bts(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btsl %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
+
+	static inline bool btr(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btrl %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
+
+	static inline bool btc(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btcl %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
 	}
 #endif
 };
@@ -441,6 +494,27 @@ struct atomic_storage<T, 8> : atomic_storage<T, 0>
 	{
 		return _interlockedbittestandreset64((volatile llong*)&dest, bit) != 0;
 	}
+#else
+	static inline bool bts(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btsq %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
+
+	static inline bool btr(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btrq %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
+
+	static inline bool btc(T& dest, uint bit)
+	{
+		bool result;
+		__asm__("lock btcq %2, %0\n" "setc %1" : "+m" (dest), "=r" (result) : "Ir" (bit) : "cc");
+		return result;
+	}
 #endif
 };
 
@@ -478,6 +552,8 @@ struct atomic_storage<T, 16> : atomic_storage<T, 0>
 		return *(T*)+cmp;
 	}
 #endif
+
+	// TODO
 };
 
 template<typename T1, typename T2, typename>
@@ -630,21 +706,16 @@ struct atomic_test_and_set
 {
 	bool operator()(T1& lhs, const T2& rhs) const
 	{
-		return lhs.test_and_set(rhs);
+		return test_and_set(lhs, rhs);
 	}
 };
 
 template<typename T1, typename T2>
 struct atomic_test_and_set<T1, T2, std::enable_if_t<std::is_integral<T1>::value && std::is_convertible<T2, T1>::value>>
 {
-	static inline bool op(T1& lhs, const T2& rhs)
-	{
-		return (atomic_storage<T1>::fetch_or(lhs, rhs) & rhs) != 0;
-	}
-
-	static constexpr auto fetch_op = &op;
-	static constexpr auto op_fetch = &op;
-	static constexpr auto atomic_op = &op;
+	static constexpr auto fetch_op = &atomic_storage<T1>::test_and_set;
+	static constexpr auto op_fetch = &atomic_storage<T1>::test_and_set;
+	static constexpr auto atomic_op = &atomic_storage<T1>::test_and_set;
 };
 
 template<typename T1, typename T2, typename>
@@ -652,21 +723,16 @@ struct atomic_test_and_reset
 {
 	bool operator()(T1& lhs, const T2& rhs) const
 	{
-		return lhs.test_and_reset(rhs);
+		return test_and_reset(lhs, rhs);
 	}
 };
 
 template<typename T1, typename T2>
 struct atomic_test_and_reset<T1, T2, std::enable_if_t<std::is_integral<T1>::value && std::is_convertible<T2, T1>::value>>
 {
-	static inline bool op(T1& lhs, const T2& rhs)
-	{
-		return (atomic_storage<T1>::fetch_and(lhs, ~rhs) & rhs) != 0;
-	}
-
-	static constexpr auto fetch_op = &op;
-	static constexpr auto op_fetch = &op;
-	static constexpr auto atomic_op = &op;
+	static constexpr auto fetch_op = &atomic_storage<T1>::test_and_reset;
+	static constexpr auto op_fetch = &atomic_storage<T1>::test_and_reset;
+	static constexpr auto atomic_op = &atomic_storage<T1>::test_and_reset;
 };
 
 template<typename T1, typename T2, typename>
@@ -674,21 +740,16 @@ struct atomic_test_and_complement
 {
 	bool operator()(T1& lhs, const T2& rhs) const
 	{
-		return lhs.test_and_complement(rhs);
+		return test_and_complement(lhs, rhs);
 	}
 };
 
 template<typename T1, typename T2>
 struct atomic_test_and_complement<T1, T2, std::enable_if_t<std::is_integral<T1>::value && std::is_convertible<T2, T1>::value>>
 {
-	static inline bool op(T1& lhs, const T2& rhs)
-	{
-		return (atomic_storage<T1>::fetch_xor(lhs, rhs) & rhs) != 0;
-	}
-
-	static constexpr auto fetch_op = &op;
-	static constexpr auto op_fetch = &op;
-	static constexpr auto atomic_op = &op;
+	static constexpr auto fetch_op = &atomic_storage<T1>::test_and_complement;
+	static constexpr auto op_fetch = &atomic_storage<T1>::test_and_complement;
+	static constexpr auto atomic_op = &atomic_storage<T1>::test_and_complement;
 };
 
 // Atomic type with lock-free and standard layout guarantees (and appropriate limitations)
@@ -952,12 +1013,6 @@ public:
 	auto operator --(int)
 	{
 		return atomic_op(atomic_post_dec<type>{});
-	}
-
-	template<typename T2 = T>
-	auto test(const T2& rhs) const
-	{
-		return load().test(rhs);
 	}
 
 	template<typename T2 = T>

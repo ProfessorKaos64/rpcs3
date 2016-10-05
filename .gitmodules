@@ -35,3 +35,9 @@
 [submodule "3rdparty/pugixml"]
 	path = 3rdparty/pugixml
 	url = https://github.com/RPCS3/pugixml
+[submodule "3rdparty/cereal"]
+	path = 3rdparty/cereal
+	url = https://github.com/USCiLab/cereal.git
+[submodule "rsx-debugger"]
+	path = rsx-debugger
+	url = https://github.com/RPCS3/rsx-debugger.git

@@ -4,6 +4,7 @@
 #include "VKTextureCache.h"
 #include "VKRenderTargets.h"
 #include "VKFormats.h"
+#include <Utilities\optional.hpp>
 
 #define RSX_DEBUG 1
 
@@ -85,8 +86,7 @@ private:
 	void sync_at_semaphore_release();
 	void prepare_rtts();
 	/// returns primitive topology, is_indexed, index_count, offset in index buffer, index type
-	std::tuple<VkPrimitiveTopology, bool, u32, VkDeviceSize, VkIndexType> upload_vertex_data();
-
+	std::tuple<VkPrimitiveTopology, u32, std::optional<std::tuple<VkDeviceSize, VkIndexType> > > upload_vertex_data();
 public:
 	bool load_program();
 	void init_buffers(bool skip_reading = false);

@@ -240,7 +240,6 @@
     <ClCompile Include="Emu\Cell\Modules\sys_prx_.cpp" />
     <ClCompile Include="Emu\Cell\Modules\sys_spinlock.cpp" />
     <ClCompile Include="Emu\Cell\Modules\sys_spu_.cpp" />
-    <ClCompile Include="Emu\Cell\PPUCallback.cpp" />
     <ClCompile Include="Emu\Cell\PPUDisAsm.cpp" />
     <ClCompile Include="Emu\Cell\PPUFunction.cpp" />
     <ClCompile Include="Emu\Cell\PPUInterpreter.cpp" />
@@ -259,7 +258,16 @@
     <ClCompile Include="Emu\RSX\Common\surface_store.cpp" />
     <ClCompile Include="Emu\RSX\Common\TextureUtils.cpp" />
     <ClCompile Include="Emu\RSX\Common\VertexProgramDecompiler.cpp" />
-    <ClCompile Include="Emu\RSX\GCM.cpp" />
+    <ClCompile Include="Emu\RSX\gcm_printing.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug - LLVM|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release - LLVM|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug - MemLeak|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Emu\RSX\gcm_enums.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="Emu\RSX\Null\NullGSRender.cpp" />
     <ClCompile Include="Emu\RSX\rsx_cache.cpp" />
     <ClCompile Include="Emu\RSX\rsx_methods.cpp" />
@@ -365,6 +373,7 @@
     <ClCompile Include="Emu\RSX\RSXThread.cpp" />
     <ClCompile Include="Emu\Memory\vm.cpp" />
     <ClCompile Include="Emu\System.cpp" />
+    <ClCompile Include="Loader\ELF.cpp" />
     <ClCompile Include="Loader\PSF.cpp" />
     <ClCompile Include="Loader\TROPUSR.cpp" />
     <ClCompile Include="Loader\TRP.cpp" />
@@ -383,18 +392,18 @@
     <ClInclude Include="..\Utilities\AutoPause.h" />
     <ClInclude Include="..\Utilities\BEType.h" />
     <ClInclude Include="..\Utilities\BitField.h" />
-    <ClInclude Include="..\Utilities\BitSet.h" />
+    <ClInclude Include="..\Utilities\bit_set.h" />
+    <ClInclude Include="..\Utilities\cfmt.h" />
     <ClInclude Include="..\Utilities\dynamic_library.h" />
     <ClInclude Include="..\Utilities\event.h" />
     <ClInclude Include="..\Utilities\geometry.h" />
     <ClInclude Include="..\Utilities\GSL.h" />
     <ClInclude Include="..\Utilities\JIT.h" />
     <ClInclude Include="..\Utilities\lockless.h" />
+    <ClInclude Include="..\Utilities\SleepQueue.h" />
     <ClInclude Include="..\Utilities\sync.h" />
-    <ClInclude Include="..\Utilities\Platform.h" />
     <ClInclude Include="..\Utilities\Log.h" />
     <ClInclude Include="..\Utilities\File.h" />
-    <ClInclude Include="..\Utilities\Macro.h" />
     <ClInclude Include="..\Utilities\Config.h" />
     <ClInclude Include="..\Utilities\rXml.h" />
     <ClInclude Include="..\Utilities\Semaphore.h" />
@@ -599,8 +608,11 @@
     <ClInclude Include="Emu\CPU\CPUThread.h" />
     <ClInclude Include="Emu\DbgCommand.h" />
     <ClInclude Include="Emu\Memory\wait_engine.h" />
+    <ClInclude Include="Emu\RSX\gcm_enums.h" />
+    <ClInclude Include="Emu\RSX\gcm_printing.h" />
     <ClInclude Include="Emu\RSX\rsx_cache.h" />
     <ClInclude Include="Emu\RSX\rsx_decode.h" />
+    <ClInclude Include="Emu\RSX\rsx_trace.h" />
     <ClInclude Include="Emu\RSX\rsx_vertex_data.h" />
     <ClInclude Include="Emu\VFS.h" />
     <ClInclude Include="Emu\GameInfo.h" />

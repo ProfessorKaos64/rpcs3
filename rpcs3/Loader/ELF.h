@@ -153,38 +153,9 @@ enum class elf_error
 	header_os,
 };
 
-// ELF loading error information
-template<>
-struct unveil<elf_error>
-{
-	static inline const char* get(elf_error error)
-	{
-		switch (error)
-		{
-		case elf_error::ok: return "OK";
-
-		case elf_error::stream: return "Invalid stream";
-		case elf_error::stream_header: return "Failed to read ELF header";
-		case elf_error::stream_phdrs: return "Failed to read ELF program headers";
-		case elf_error::stream_shdrs: return "Failed to read ELF section headers";
-		case elf_error::stream_data: return "Failed to read ELF program data";
-
-		case elf_error::header_magic: return "Not an ELF";
-		case elf_error::header_version: return "Invalid or unsupported ELF format";
-		case elf_error::header_class: return "Invalid ELF class";
-		case elf_error::header_machine: return "Invalid ELF machine";
-		case elf_error::header_endianness: return "Invalid ELF data (endianness)";
-		case elf_error::header_type: return "Invalid ELF type";
-		case elf_error::header_os: return "Invalid ELF OS ABI";
-
-		default: throw error;
-		}
-	}
-};
-
 // ELF object with specified parameters.
-// en_t: endianness (specify le_t or be_t)
-// sz_t: size (specify u32 for ELF32, u64 for ELF64)
+// en_t: endianness (elf_le or elf_be)
+// sz_t: size (u32 for ELF32, u64 for ELF64)
 template<template<typename T> class en_t, typename sz_t, elf_machine Machine, elf_os OS, elf_type Type>
 class elf_object
 {

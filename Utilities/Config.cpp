@@ -12,7 +12,7 @@ namespace cfg
 	{
 		if (_type != type::node)
 		{
-			throw std::logic_error("Invalid root node");
+			fmt::throw_exception<std::logic_error>("Invalid root node" HERE);
 		}
 	}
 
@@ -21,7 +21,7 @@ namespace cfg
 	{
 		if (!owner.m_nodes.emplace(name, this).second)
 		{
-			throw std::logic_error("Node already exists");
+			fmt::throw_exception<std::logic_error>("Node already exists: %s" HERE, name);
 		}
 	}
 
@@ -32,7 +32,7 @@ namespace cfg
 			return *static_cast<const node&>(*this).m_nodes.at(name);
 		}
 
-		throw std::logic_error("Invalid node type");
+		fmt::throw_exception<std::logic_error>("Invalid node type" HERE);
 	}
 
 	entry_base& entry_base::operator[](const char* name) const
@@ -42,7 +42,17 @@ namespace cfg
 			return *static_cast<const node&>(*this).m_nodes.at(name);
 		}
 
-		throw std::logic_error("Invalid node type");
+		fmt::throw_exception<std::logic_error>("Invalid node type" HERE);
+	}
+
+	bool entry_base::from_string(const std::string&)
+	{
+		fmt::throw_exception<std::logic_error>("from_string() purecall" HERE);
+	}
+
+	bool entry_base::from_list(std::vector<std::string>&&)
+	{
+		fmt::throw_exception<std::logic_error>("from_list() purecall" HERE);
 	}
 
 	// Emit YAML
@@ -83,6 +93,62 @@ bool cfg::try_to_int64(s64* out, const std::string& value, s64 min, s64 max)
 
 	if (out) *out = result;
 	return true;
+}
+
+bool cfg::try_to_enum_value(u64* out, decltype(&fmt_class_string<int>::format) func, const std::string& value)
+{
+	for (u64 i = 0;; i++)
+	{
+		std::string var;
+		func(var, i);
+
+		if (var == value)
+		{
+			if (out) *out = i;
+			return true;
+		}
+
+		std::string hex;
+		fmt_class_string<u64>::format(hex, i);
+		if (var == hex)
+		{
+			break;
+		}
+	}
+
+	try
+	{
+		const auto val = std::stoull(value, nullptr, 0);
+
+		if (out) *out = val;
+		return true;
+	}
+	catch (...)
+	{
+		return false;
+	}
+}
+
+std::vector<std::string> cfg::try_to_enum_list(decltype(&fmt_class_string<int>::format) func)
+{
+	std::vector<std::string> result;
+
+	for (u64 i = 0;; i++)
+	{
+		std::string var;
+		func(var, i);
+
+		std::string hex;
+		fmt_class_string<u64>::format(hex, i);
+		if (var == hex)
+		{
+			break;
+		}
+
+		result.emplace_back(std::move(var));
+	}
+
+	return result;
 }
 
 void cfg::encode(YAML::Emitter& out, const cfg::entry_base& rhs)

@@ -29,6 +29,8 @@ namespace vk
 				return false;
 			if (memcmp(&rs, &other.rs, sizeof(VkPipelineRasterizationStateCreateInfo)))
 				return false;
+			if (render_pass != other.render_pass)
+				return false;
 
 			return num_targets == other.num_targets;
 		}
@@ -57,6 +59,7 @@ namespace std
 			seed ^= hash_struct(pipelineProperties.ia);
 			seed ^= hash_struct(pipelineProperties.ds);
 			seed ^= hash_struct(pipelineProperties.rs);
+			seed ^= hash_struct(pipelineProperties.cs);
 			seed ^= hash_struct(pipelineProperties.att_state[0]);
 			return hash<size_t>()(seed);
 		}
@@ -122,18 +125,13 @@ struct VKTraits
 		ms.pSampleMask = NULL;
 		ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-		VkPipelineColorBlendStateCreateInfo cb = {};
-		cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-		cb.attachmentCount = 1;
-		cb.pAttachments = pipelineProperties.att_state;
-
 		VkPipeline pipeline;
 		VkGraphicsPipelineCreateInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		info.pVertexInputState = &vi;
 		info.pInputAssemblyState = &pipelineProperties.ia;
 		info.pRasterizationState = &pipelineProperties.rs;
-		info.pColorBlendState = &cb;
+		info.pColorBlendState = &pipelineProperties.cs;
 		info.pMultisampleState = &ms;
 		info.pViewportState = &vp;
 		info.pDepthStencilState = &pipelineProperties.ds;
@@ -155,4 +153,11 @@ struct VKTraits
 
 class VKProgramBuffer : public program_state_cache<VKTraits>
 {
+public:
+	void clear()
+	{
+		program_state_cache<VKTraits>::clear();
+		m_vertex_shader_cache.clear();
+		m_fragment_shader_cache.clear();
+	}
 };

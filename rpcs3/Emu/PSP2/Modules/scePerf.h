@@ -2,22 +2,11 @@
 
 #include "Emu/PSP2/ErrorCodes.h"
 
-enum ScePerfError : s32
+enum ScePerfError : u32
 {
 	// Error Codes
-	SCE_PERF_ERROR_INVALID_ARGUMENT = ERROR_CODE(0x80580000),
+	SCE_PERF_ERROR_INVALID_ARGUMENT = 0x80580000,
 };
-
-template<>
-inline const char* arm_error_code::print(ScePerfError error)
-{
-	switch (error)
-	{
-		STR_CASE(SCE_PERF_ERROR_INVALID_ARGUMENT);
-	}
-
-	return nullptr;
-}
 
 enum : s32
 {

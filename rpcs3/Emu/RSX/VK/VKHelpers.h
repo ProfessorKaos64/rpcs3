@@ -15,16 +15,24 @@
 #include "../Common/ring_buffer_helper.h"
 
 #define DESCRIPTOR_MAX_DRAW_CALLS 1024
+
+#define VERTEX_BUFFERS_FIRST_BIND_SLOT 3
+#define FRAGMENT_CONSTANT_BUFFERS_BIND_SLOT 2
+#define VERTEX_CONSTANT_BUFFERS_BIND_SLOT 1
+#define SCALE_OFFSET_BIND_SLOT 0
+#define TEXTURES_FIRST_BIND_SLOT 19
+#define VERTEX_TEXTURES_FIRST_BIND_SLOT 35 //19+16
+
 extern cfg::bool_entry g_cfg_rsx_debug_output;
 
 namespace rsx
 {
-	class texture;
+	class fragment_texture;
 }
 
 namespace vk
 {
-#define CHECK_RESULT(expr) { VkResult __res = expr; if(__res != VK_SUCCESS) throw EXCEPTION("Assertion failed! Result is %Xh", __res); }
+#define CHECK_RESULT(expr) do { VkResult _res = (expr); if (_res != VK_SUCCESS) fmt::throw_exception("Assertion failed! Result is %Xh", (s32)_res); } while (0)
 
 	VKAPI_ATTR void *VKAPI_CALL mem_realloc(void *pUserData, void *pOriginal, size_t size, size_t alignment, VkSystemAllocationScope allocationScope);
 	VKAPI_ATTR void *VKAPI_CALL mem_alloc(void *pUserData, size_t size, size_t alignment, VkSystemAllocationScope allocationScope);
@@ -64,7 +72,7 @@ namespace vk
 
 	void change_image_layout(VkCommandBuffer cmd, VkImage image, VkImageLayout current_layout, VkImageLayout new_layout, VkImageSubresourceRange range);
 	void copy_image(VkCommandBuffer cmd, VkImage &src, VkImage &dst, VkImageLayout srcLayout, VkImageLayout dstLayout, u32 width, u32 height, u32 mipmaps, VkImageAspectFlagBits aspect);
-	void copy_scaled_image(VkCommandBuffer cmd, VkImage &src, VkImage &dst, VkImageLayout srcLayout, VkImageLayout dstLayout, u32 src_width, u32 src_height, u32 dst_width, u32 dst_height, u32 mipmaps, VkImageAspectFlagBits aspect);
+	void copy_scaled_image(VkCommandBuffer cmd, VkImage &src, VkImage &dst, VkImageLayout srcLayout, VkImageLayout dstLayout, u32 src_x_offset, u32 src_y_offset, u32 src_width, u32 src_height, u32 dst_x_offset, u32 dst_y_offset, u32 dst_width, u32 dst_height, u32 mipmaps, VkImageAspectFlagBits aspect);
 
 	VkFormat get_compatible_sampler_format(u32 format);
 	std::pair<VkFormat, VkComponentMapping> get_compatible_surface_format(rsx::surface_color_format color_format);
@@ -124,7 +132,7 @@ namespace vk
 				vkGetPhysicalDeviceQueueFamilyProperties(dev, &count, queue_props.data());
 			}
 
-			if (queue >= queue_props.size()) throw EXCEPTION("Bad queue index passed to get_queue_properties (%u)", queue);
+			if (queue >= queue_props.size()) fmt::throw_exception("Bad queue index passed to get_queue_properties (%u)" HERE, queue);
 			return queue_props[queue];
 		}
 
@@ -157,7 +165,7 @@ namespace vk
 			float queue_priorities[1] = { 0.f };
 			pgpu = &pdev;
 
-			VkDeviceQueueCreateInfo queue;
+			VkDeviceQueueCreateInfo queue = {};
 			queue.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 			queue.pNext = NULL;
 			queue.queueFamilyIndex = graphics_queue_idx;
@@ -175,7 +183,7 @@ namespace vk
 			if (g_cfg_rsx_debug_output)
 				layers.push_back("VK_LAYER_LUNARG_standard_validation");
 
-			VkDeviceCreateInfo device;
+			VkDeviceCreateInfo device = {};
 			device.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 			device.pNext = NULL;
 			device.queueCreateInfoCount = 1;
@@ -287,7 +295,7 @@ namespace vk
 				access_mask |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 
 			if (!owner->get_compatible_memory_type(typeBits, access_mask, &typeIndex))
-				throw EXCEPTION("Could not find suitable memory type!");
+				fmt::throw_exception("Could not find suitable memory type!" HERE);
 
 			VkMemoryAllocateInfo infos;
 			infos.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -338,7 +346,9 @@ namespace vk
 		VkImageCreateInfo info = {};
 		std::shared_ptr<vk::memory_block> memory;
 
-		image(VkDevice dev, uint32_t memory_type_index,
+		image(vk::render_device &dev,
+			uint32_t memory_type_index,
+			uint32_t access_flags,
 			VkImageType image_type,
 			VkFormat format,
 			uint32_t width, uint32_t height, uint32_t depth,
@@ -367,8 +377,16 @@ namespace vk
 
 			VkMemoryRequirements memory_req;
 			vkGetImageMemoryRequirements(m_device, value, &memory_req);
-			memory = std::make_shared<vk::memory_block>(m_device, memory_req.size, memory_type_index);
+			
+			if (!(memory_req.memoryTypeBits & (1 << memory_type_index)))
+			{
+				//Suggested memory type is incompatible with this memory type.
+				//Go through the bitset and test for requested props.
+				if (!dev.get_compatible_memory_type(memory_req.memoryTypeBits, access_flags, &memory_type_index))
+					fmt::throw_exception("No compatible memory type was found!" HERE);
+			}
 
+			memory = std::make_shared<vk::memory_block>(m_device, memory_req.size, memory_type_index);
 			CHECK_RESULT(vkBindImageMemory(m_device, value, memory->memory, 0));
 		}
 
@@ -448,7 +466,7 @@ namespace vk
 		void create(vk::render_device &device, VkFormat format, VkImageUsageFlags usage, u32 width, u32 height, u32 mipmaps = 1, bool gpu_only = false, VkComponentMapping swizzle = default_component_map());
 		void destroy();
 
-		void init(rsx::texture &tex, vk::command_buffer &cmd, bool ignore_checks = false);
+		void init(rsx::fragment_texture &tex, vk::command_buffer &cmd, bool ignore_checks = false);
 		void flush(vk::command_buffer & cmd);
 
 		//Fill with debug color 0xFF
@@ -472,7 +490,7 @@ namespace vk
 		VkBufferCreateInfo info = {};
 		std::unique_ptr<vk::memory_block> memory;
 
-		buffer(VkDevice dev, u64 size, uint32_t memory_type_index, VkBufferUsageFlagBits usage, VkBufferCreateFlags flags)
+		buffer(vk::render_device& dev, u64 size, uint32_t memory_type_index, uint32_t access_flags, VkBufferUsageFlagBits usage, VkBufferCreateFlags flags)
 			: m_device(dev)
 		{
 			info.size = size;
@@ -483,9 +501,18 @@ namespace vk
 
 			CHECK_RESULT(vkCreateBuffer(m_device, &info, nullptr, &value));
 
-			VkMemoryRequirements memory_reqs;
 			//Allocate vram for this buffer
+			VkMemoryRequirements memory_reqs;
 			vkGetBufferMemoryRequirements(m_device, value, &memory_reqs);
+
+			if (!(memory_reqs.memoryTypeBits & (1 << memory_type_index)))
+			{
+				//Suggested memory type is incompatible with this memory type.
+				//Go through the bitset and test for requested props.
+				if (!dev.get_compatible_memory_type(memory_reqs.memoryTypeBits, access_flags, &memory_type_index))
+					fmt::throw_exception("No compatible memory type was found!" HERE);
+			}
+
 			memory.reset(new memory_block(m_device, memory_reqs.size, memory_type_index));
 			vkBindBufferMemory(dev, value, memory->memory, 0);
 		}
@@ -589,6 +616,9 @@ namespace vk
 		VkFramebuffer value;
 		VkFramebufferCreateInfo info = {};
 		std::vector<std::unique_ptr<vk::image_view>> attachements;
+		u32 m_width = 0;
+		u32 m_height = 0;
+
 	public:
 		framebuffer(VkDevice dev, VkRenderPass pass, u32 width, u32 height, std::vector<std::unique_ptr<vk::image_view>> &&atts)
 			: m_device(dev), attachements(std::move(atts))
@@ -608,12 +638,25 @@ namespace vk
 			info.renderPass = pass;
 			info.layers = 1;
 
+			m_width = width;
+			m_height = height;
+
 			CHECK_RESULT(vkCreateFramebuffer(dev, &info, nullptr, &value));
 		}
 
 		~framebuffer()
 		{
 			vkDestroyFramebuffer(m_device, value, nullptr);
+		}
+
+		u32 width()
+		{
+			return m_width;
+		}
+
+		u32 height()
+		{
+			return m_height;
 		}
 
 		framebuffer(const framebuffer&) = delete;
@@ -841,7 +884,7 @@ namespace vk
 			nb_swap_images = 0;
 			getSwapchainImagesKHR(dev, m_vk_swapchain, &nb_swap_images, nullptr);
 			
-			if (!nb_swap_images) throw EXCEPTION("Driver returned 0 images for swapchain");
+			if (!nb_swap_images) fmt::throw_exception("Driver returned 0 images for swapchain" HERE);
 
 			std::vector<VkImage> swap_images;
 			swap_images.resize(nb_swap_images);
@@ -1058,7 +1101,7 @@ namespace vk
 		void makeCurrentInstance(uint32_t instance_id)
 		{
 			if (!instance_id || instance_id > m_vk_instances.size())
-				throw EXCEPTION("Invalid instance passed to makeCurrentInstance (%u)", instance_id);
+				fmt::throw_exception("Invalid instance passed to makeCurrentInstance (%u)" HERE, instance_id);
 
 			if (m_debugger)
 			{
@@ -1078,7 +1121,7 @@ namespace vk
 		VkInstance getInstanceById(uint32_t instance_id)
 		{
 			if (!instance_id || instance_id > m_vk_instances.size())
-				throw EXCEPTION("Invalid instance passed to getInstanceById (%u)", instance_id);
+				fmt::throw_exception("Invalid instance passed to getInstanceById (%u)" HERE, instance_id);
 
 			instance_id--;
 			return m_vk_instances[instance_id];
@@ -1160,10 +1203,10 @@ namespace vk
 
 			// Generate error if could not find both a graphics and a present queue
 			if (graphicsQueueNodeIndex == UINT32_MAX || presentQueueNodeIndex == UINT32_MAX)
-				throw EXCEPTION("Failed to find a suitable graphics/compute queue");
+				fmt::throw_exception("Failed to find a suitable graphics/compute queue" HERE);
 
 			if (graphicsQueueNodeIndex != presentQueueNodeIndex)
-				throw EXCEPTION("Separate graphics and present queues not supported");
+				fmt::throw_exception("Separate graphics and present queues not supported" HERE);
 
 			// Get the list of VkFormat's that are supported:
 			uint32_t formatCount;
@@ -1181,7 +1224,7 @@ namespace vk
 			}
 			else
 			{
-				if (!formatCount) throw EXCEPTION("Format count is zero!");
+				if (!formatCount) fmt::throw_exception("Format count is zero!" HERE);
 				format = surfFormats[0].format;
 			}
 
@@ -1292,11 +1335,6 @@ namespace vk
 			program& load_uniforms(program_domain domain, const std::vector<program_input>& inputs);
 
 			bool has_uniform(std::string uniform_name);
-#define VERTEX_BUFFERS_FIRST_BIND_SLOT 3
-#define FRAGMENT_CONSTANT_BUFFERS_BIND_SLOT 2
-#define VERTEX_CONSTANT_BUFFERS_BIND_SLOT 1
-#define TEXTURES_FIRST_BIND_SLOT 19
-#define SCALE_OFFSET_BIND_SLOT 0
 			void bind_uniform(VkDescriptorImageInfo image_descriptor, std::string uniform_name, VkDescriptorSet &descriptor_set);
 			void bind_uniform(VkDescriptorBufferInfo buffer_descriptor, uint32_t binding_point, VkDescriptorSet &descriptor_set);
 			void bind_uniform(const VkBufferView &buffer_view, const std::string &binding_name, VkDescriptorSet &descriptor_set);

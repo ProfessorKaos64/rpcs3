@@ -3,6 +3,16 @@
 #include "VFS.h"
 #include "DbgCommand.h"
 
+enum class system_type
+{
+	ps3,
+	psv, // Experimental
+	//psp, // Hypothetical
+};
+
+// Current process type
+extern system_type g_system;
+
 enum class frame_type;
 
 struct EmuCallbacks
@@ -32,8 +42,6 @@ enum Status : u32
 // Emulation Stopped exception event
 class EmulationStopped {};
 
-class CallbackManager;
-
 class Emulator final
 {
 	atomic_t<u32> m_status;
@@ -44,8 +52,6 @@ class Emulator final
 	atomic_t<u64> m_pause_amend_time; // increased when resumed
 
 	u32 m_cpu_thr_stop;
-
-	std::unique_ptr<CallbackManager>  m_callback_manager;
 
 	std::string m_path;
 	std::string m_elf_path;
@@ -107,11 +113,6 @@ public:
 		return m_pause_amend_time;
 	}
 
-	CallbackManager& GetCallbackManager()
-	{
-		return *m_callback_manager;
-	}
-
 	void SetCPUThreadStop(u32 addr)
 	{
 		m_cpu_thr_stop = addr;
@@ -130,10 +131,10 @@ public:
 	void Resume();
 	void Stop();
 
-	force_inline bool IsRunning() const { return m_status == Running; }
-	force_inline bool IsPaused()  const { return m_status == Paused; }
-	force_inline bool IsStopped() const { return m_status == Stopped; }
-	force_inline bool IsReady()   const { return m_status == Ready; }
+	bool IsRunning() const { return m_status == Running; }
+	bool IsPaused()  const { return m_status == Paused; }
+	bool IsStopped() const { return m_status == Stopped; }
+	bool IsReady()   const { return m_status == Ready; }
 };
 
 extern Emulator Emu;

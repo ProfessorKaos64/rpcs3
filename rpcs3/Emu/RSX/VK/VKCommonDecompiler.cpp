@@ -73,6 +73,10 @@ namespace vk
 			return "dFdx($0)";
 		case FUNCTION::FUNCTION_DFDY:
 			return "dFdy($0)";
+		case FUNCTION::FUNCTION_VERTEX_TEXTURE_FETCH2D:
+			return "textureLod($t, $0.xy, 0)";
+		case FUNCTION::FUNCTION_TEXTURE_SAMPLE2D_DEPTH_RGBA:
+			return "texture2DReconstruct($t, $0.xy)";
 		}
 	}
 
@@ -93,7 +97,7 @@ namespace vk
 		case COMPARE::FUNCTION_SNE:
 			return "notEqual(" + Op0 + ", " + Op1 + ")";
 		}
-		throw EXCEPTION("Unknown compare function");
+		fmt::throw_exception("Unknown compare function" HERE);
 	}
 
 	void insert_glsl_legacy_function(std::ostream& OS)
@@ -129,6 +133,16 @@ namespace vk
 		OS << "	result.y = clamped_val.x;\n";
 		OS << "	result.z = clamped_val.x > 0. ? exp(clamped_val.w * log(max(clamped_val.y, 1.E-10))) : 0.;\n";
 		OS << "	return result;\n";
+		OS << "}\n\n";
+
+		OS << "vec4 texture2DReconstruct(sampler2D tex, vec2 coord)\n";
+		OS << "{\n";
+		OS << "	float depth_value = texture(tex, coord.xy).r;\n";
+		OS << "	uint value = uint(depth_value * 16777215);\n";
+		OS << "	uint b = (value & 0xff);\n";
+		OS << "	uint g = (value >> 8) & 0xff;\n";
+		OS << "	uint r = (value >> 16) & 0xff;\n";
+		OS << "	return vec4(float(r)/255., float(g)/255., float(b)/255., 1.);\n";
 		OS << "}\n\n";
 	}
 
@@ -259,7 +273,7 @@ namespace vk
 				return t;
 		}
 
-		throw EXCEPTION("Unknown register name: %s", name);
+		fmt::throw_exception("Unknown register name: %s" HERE, name);
 	}
 
 	bool compile_glsl_to_spv(std::string& shader, glsl::program_domain domain, std::vector<u32>& spv)
@@ -291,8 +305,8 @@ namespace vk
 		}
 		else
 		{
-			LOG_ERROR(RSX, shader_object.getInfoLog());
-			LOG_ERROR(RSX, shader_object.getInfoDebugLog());
+			LOG_ERROR(RSX, "%s", shader_object.getInfoLog());
+			LOG_ERROR(RSX, "%s", shader_object.getInfoDebugLog());
 		}
 
 		glslang::FinalizeProcess();

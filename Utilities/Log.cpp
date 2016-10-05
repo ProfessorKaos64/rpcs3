@@ -3,15 +3,31 @@
 #include "StrFmt.h"
 
 #include "rpcs3_version.h"
-#include <cstdarg>
 #include <string>
 
 // Thread-specific log prefix provider
 thread_local std::string(*g_tls_log_prefix)() = nullptr;
 
-#ifndef _MSC_VER
-constexpr DECLARE(bijective<logs::level, const char*>::map);
-#endif
+template<>
+void fmt_class_string<logs::level>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](auto lev)
+	{
+		switch (lev)
+		{
+		case logs::level::always: return "Nothing";
+		case logs::level::fatal: return "Fatal";
+		case logs::level::error: return "Error";
+		case logs::level::todo: return "TODO";
+		case logs::level::success: return "Success";
+		case logs::level::warning: return "Warning";
+		case logs::level::notice: return "Notice";
+		case logs::level::trace: return "Trace";
+		}
+
+		return unknown;
+	});
+}
 
 namespace logs
 {
@@ -40,7 +56,7 @@ namespace logs
 		}
 
 		// Encode level, current thread name, channel name and write log message
-		virtual void log(const message& msg) override;
+		virtual void log(const message& msg, const std::string& prefix, const std::string& text) override;
 	};
 
 	static file_listener* get_logger()
@@ -72,22 +88,10 @@ void logs::listener::add(logs::listener* _new)
 	}
 }
 
-void logs::channel::broadcast(const logs::channel& ch, logs::level sev, const char* fmt...)
+void logs::message::broadcast(const char* fmt, const fmt_type_info* sup, const u64* args)
 {
-	va_list args;
-	va_start(args, fmt);
-	std::string&& text = fmt::unsafe_vformat(fmt, args);
-	std::string&& prefix = g_tls_log_prefix ? g_tls_log_prefix() : "";
-	va_end(args);
-
-	// Prepare message information
-	message msg;
-	msg.ch = &ch;
-	msg.sev = sev;
-	msg.text = text.data();
-	msg.text_size = text.size();
-	msg.prefix = prefix.data();
-	msg.prefix_size = prefix.size();
+	std::string text; fmt::raw_append(text, fmt, sup, args);
+	std::string prefix(g_tls_log_prefix ? g_tls_log_prefix() : "");
 
 	// Get first (main) listener
 	listener* lis = get_logger();
@@ -95,7 +99,7 @@ void logs::channel::broadcast(const logs::channel& ch, logs::level sev, const ch
 	// Send message to all listeners
 	while (lis)
 	{
-		lis->log(msg);
+		lis->log(*this, prefix, text);
 		lis = lis->m_next;
 	}
 }
@@ -108,7 +112,7 @@ logs::file_writer::file_writer(const std::string& name)
 	{
 		if (!m_file.open(fs::get_config_dir() + name, fs::rewrite + fs::append))
 		{
-			throw fmt::exception("Can't create log file %s (error %s)", name, fs::g_tls_error);
+			fmt::throw_exception("Can't create log file %s (error %s)", name, fs::g_tls_error);
 		}
 	}
 	catch (...)
@@ -122,9 +126,9 @@ void logs::file_writer::log(const char* text, std::size_t size)
 	m_file.write(text, size);
 }
 
-void logs::file_listener::log(const logs::message& msg)
+void logs::file_listener::log(const logs::message& msg, const std::string& prefix, const std::string& _text)
 {
-	std::string text; text.reserve(msg.text_size + msg.prefix_size + 200);
+	std::string text; text.reserve(prefix.size() + _text.size() + 200);
 
 	// Used character: U+00B7 (Middle Dot)
 	switch (msg.sev)
@@ -141,9 +145,11 @@ void logs::file_listener::log(const logs::message& msg)
 
 	// TODO: print time?
 
-	if (msg.prefix_size > 0)
+	if (prefix.size() > 0)
 	{
-		text += fmt::format("{%s} ", msg.prefix);
+		text += "{";
+		text += prefix;
+		text += "} ";
 	}
 	
 	if (msg.ch->name)
@@ -156,7 +162,7 @@ void logs::file_listener::log(const logs::message& msg)
 		text += "TODO: ";
 	}
 	
-	text += msg.text;
+	text += _text;
 	text += '\n';
 
 	file_writer::log(text.data(), text.size());

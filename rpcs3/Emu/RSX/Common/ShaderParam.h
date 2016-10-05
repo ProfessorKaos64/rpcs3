@@ -33,6 +33,11 @@ enum class FUNCTION {
 	FUNCTION_TEXTURE_SAMPLE3D_PROJ,
 	FUNCTION_TEXTURE_SAMPLE3D_LOD,
 	FUNCTION_TEXTURE_SAMPLE3D_GRAD,
+	FUNCTION_VERTEX_TEXTURE_FETCH1D,
+	FUNCTION_VERTEX_TEXTURE_FETCH2D,
+	FUNCTION_VERTEX_TEXTURE_FETCH3D,
+	FUNCTION_VERTEX_TEXTURE_FETCHCUBE,
+	FUNCTION_TEXTURE_SAMPLE2D_DEPTH_RGBA
 };
 
 enum class COMPARE {
@@ -157,7 +162,7 @@ public:
 	{
 		auto var_blocks = fmt::split(var, { "." });
 
-		EXPECTS(var_blocks.size() != 0);
+		verify(HERE), (var_blocks.size() != 0);
 
 		name = var_blocks[0];
 

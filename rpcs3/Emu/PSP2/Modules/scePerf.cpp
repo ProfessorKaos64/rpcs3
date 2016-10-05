@@ -8,22 +8,36 @@ logs::channel scePerf("scePerf", logs::level::notice);
 
 extern u64 get_system_time();
 
-arm_error_code scePerfArmPmonReset(ARMv7Thread& cpu, s32 threadId)
+template<>
+void fmt_class_string<ScePerfError>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](auto error)
+	{
+		switch (error)
+		{
+		STR_CASE(SCE_PERF_ERROR_INVALID_ARGUMENT);
+		}
+
+		return unknown;
+	});
+}
+
+error_code scePerfArmPmonReset(ARMv7Thread& cpu, s32 threadId)
 {
 	scePerf.warning("scePerfArmPmonReset(threadId=0x%x)", threadId);
 
-	VERIFY(threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF);
+	verify(HERE), threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF;
 
 	cpu.counters = {};
 
 	return SCE_OK;
 }
 
-arm_error_code scePerfArmPmonSelectEvent(ARMv7Thread& cpu, s32 threadId, u32 counter, u8 eventCode)
+error_code scePerfArmPmonSelectEvent(ARMv7Thread& cpu, s32 threadId, u32 counter, u8 eventCode)
 {
 	scePerf.warning("scePerfArmPmonSelectEvent(threadId=0x%x, counter=0x%x, eventCode=0x%x)", threadId, counter, eventCode);
 
-	VERIFY(threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF);
+	verify(HERE), threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF;
 
 	if (counter >= 6)
 	{
@@ -58,7 +72,7 @@ arm_error_code scePerfArmPmonSelectEvent(ARMv7Thread& cpu, s32 threadId, u32 cou
 
 	default:
 	{
-		throw EXCEPTION("Unknown event requested");
+		fmt::throw_exception("Unknown event requested" HERE);
 	}
 	}
 
@@ -68,29 +82,29 @@ arm_error_code scePerfArmPmonSelectEvent(ARMv7Thread& cpu, s32 threadId, u32 cou
 	return SCE_OK;
 }
 
-arm_error_code scePerfArmPmonStart(ARMv7Thread& cpu, s32 threadId)
+error_code scePerfArmPmonStart(ARMv7Thread& cpu, s32 threadId)
 {
 	scePerf.warning("scePerfArmPmonStart(threadId=0x%x)", threadId);
 
-	VERIFY(threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF);
+	verify(HERE), threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF;
 
 	return SCE_OK;
 }
 
-arm_error_code scePerfArmPmonStop(ARMv7Thread& cpu, s32 threadId)
+error_code scePerfArmPmonStop(ARMv7Thread& cpu, s32 threadId)
 {
 	scePerf.warning("scePerfArmPmonStop(threadId=0x%x)");
 
-	VERIFY(threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF);
+	verify(HERE), threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF;
 
 	return SCE_OK;
 }
 
-arm_error_code scePerfArmPmonGetCounterValue(ARMv7Thread& cpu, s32 threadId, u32 counter, vm::ptr<u32> pValue)
+error_code scePerfArmPmonGetCounterValue(ARMv7Thread& cpu, s32 threadId, u32 counter, vm::ptr<u32> pValue)
 {
 	scePerf.warning("scePerfArmPmonGetCounterValue(threadId=0x%x, counter=%d, pValue=*0x%x)", threadId, counter, pValue);
 
-	VERIFY(threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF);
+	verify(HERE), threadId == SCE_PERF_ARM_PMON_THREAD_ID_SELF;
 
 	if (counter >= 6 && counter != SCE_PERF_ARM_PMON_CYCLE_COUNTER)
 	{
@@ -103,13 +117,13 @@ arm_error_code scePerfArmPmonGetCounterValue(ARMv7Thread& cpu, s32 threadId, u32
 	}
 	else
 	{
-		throw EXCEPTION("Cycle counter requested");
+		fmt::throw_exception("Cycle counter requested" HERE);
 	}
 
 	return SCE_OK;
 }
 
-arm_error_code scePerfArmPmonSoftwareIncrement(ARMv7Thread& cpu, u32 mask)
+error_code scePerfArmPmonSoftwareIncrement(ARMv7Thread& cpu, u32 mask)
 {
 	scePerf.warning("scePerfArmPmonSoftwareIncrement(mask=0x%x)", mask);
 
@@ -145,22 +159,22 @@ u32 scePerfGetTimebaseFrequency()
 
 s32 _sceRazorCpuInit(vm::cptr<void> pBufferBase, u32 bufferSize, u32 numPerfCounters, vm::pptr<u32> psceRazorVars)
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 sceRazorCpuPushMarker(vm::cptr<char> szLabel)
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 sceRazorCpuPopMarker()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 sceRazorCpuSync()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 #define REG_FUNC(nid, name) REG_FNID(ScePerf, nid, name)

@@ -14,18 +14,18 @@ namespace rsx
 		texture_dimension_3d = 3,
 	};
 
-	class texture
+	class fragment_texture
 	{
 	protected:
-		u8 m_index;
+		const u8 m_index;
 		std::array<u32, 0x10000 / 4> &registers;
 
 	public:
-		texture(u8 idx, std::array<u32, 0x10000 / 4> &r);
-		texture() = delete;
+		fragment_texture(u8 idx, std::array<u32, 0x10000 / 4> &r) : m_index(idx), registers(r) { }
+		fragment_texture() = delete;
 
 		//initialize texture registers with default values
-		void init(u8 index);
+		void init();
 
 		// Offset
 		u32 offset() const;
@@ -93,15 +93,15 @@ namespace rsx
 	class vertex_texture
 	{
 	protected:
-		u8 m_index;
+		const u8 m_index;
 		std::array<u32, 0x10000 / 4> &registers;
 
 	public:
-		vertex_texture(u8 idx, std::array<u32, 0x10000 / 4> &r);
+		vertex_texture(u8 idx, std::array<u32, 0x10000 / 4> &r) : m_index(idx), registers(r) { }
 		vertex_texture() = delete;
 
 		//initialize texture registers with default values
-		void init(u8 index);
+		void init();
 
 		// Offset
 		u32 offset() const;

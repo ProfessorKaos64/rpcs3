@@ -8,20 +8,56 @@
 
 #include "Utilities/StrUtil.h"
 
+#include <mutex>
+#include <queue>
+
 logs::channel cellSysutil("cellSysutil", logs::level::notice);
 
-// Temporarily
-using sys_callbacks_t = std::array<std::pair<vm::ptr<CellSysutilCallback>, vm::ptr<void>>, 4>;
-
-void sysutilSendSystemCommand(u64 status, u64 param)
+struct sysutil_cb_manager
 {
-	if (const auto g_sys_callback = fxm::get<sys_callbacks_t>())
+	std::mutex mutex;
+
+	std::array<std::pair<vm::ptr<CellSysutilCallback>, vm::ptr<void>>, 4> callbacks;
+
+	std::queue<std::function<s32(ppu_thread&)>> registered;
+
+	std::function<s32(ppu_thread&)> get_cb()
 	{
-		for (auto& cb : *g_sys_callback)
+		std::lock_guard<std::mutex> lock(mutex);
+
+		if (registered.empty())
+		{
+			return nullptr;
+		}
+
+		auto func = std::move(registered.front());
+
+		registered.pop();
+
+		return func;
+	}
+};
+
+extern void sysutil_register_cb(std::function<s32(ppu_thread&)>&& cb)
+{
+	const auto cbm = fxm::get_always<sysutil_cb_manager>();
+
+	std::lock_guard<std::mutex> lock(cbm->mutex);
+
+	cbm->registered.push(std::move(cb));
+}
+
+extern void sysutil_send_system_cmd(u64 status, u64 param)
+{
+	if (const auto cbm = fxm::get<sysutil_cb_manager>())
+	{
+		for (auto& cb : cbm->callbacks)
 		{
 			if (cb.first)
 			{
-				Emu.GetCallbackManager().Register([=](PPUThread& ppu) -> s32
+				std::lock_guard<std::mutex> lock(cbm->mutex);
+
+				cbm->registered.push([=](ppu_thread& ppu) -> s32
 				{
 					// TODO: check it and find the source of the return value (void isn't equal to CELL_OK)
 					cb.first(ppu, status, param, cb.second);
@@ -54,25 +90,15 @@ cfg::map_entry<s32> g_cfg_sys_language(cfg::root.sys, "Language",
 	{ "English (UK)", CELL_SYSUTIL_LANG_ENGLISH_GB },
 });
 
-enum class systemparam_id_name : s32 {};
+// For test
+enum systemparam_id_name : s32 {};
 
 template<>
-struct unveil<systemparam_id_name, void>
+void fmt_class_string<systemparam_id_name>::format(std::string& out, u64 arg)
 {
-	struct temp
+	format_enum(out, arg, [](auto value)
 	{
-		s32 value;
-		char buf[12];
-
-		temp(systemparam_id_name value)
-			: value(s32(value))
-		{
-		}
-	};
-
-	static inline const char* get(temp&& in)
-	{
-		switch (in.value)
+		switch (value)
 		{
 		case CELL_SYSUTIL_SYSTEMPARAM_ID_LANG: return "ID_LANG";
 		case CELL_SYSUTIL_SYSTEMPARAM_ID_ENTER_BUTTON_ASSIGN: return "ID_ENTER_BUTTON_ASSIGN";
@@ -93,14 +119,13 @@ struct unveil<systemparam_id_name, void>
 		case CELL_SYSUTIL_SYSTEMPARAM_ID_CURRENT_USERNAME: return "ID_CURRENT_USERNAME";
 		}
 
-		std::snprintf(in.buf, sizeof(in.buf), "!0x%04X", in.value);
-		return in.buf;
-	}
-};
+		return unknown;
+	});
+}
 
-s32 cellSysutilGetSystemParamInt(s32 id, vm::ptr<s32> value)
+s32 cellSysutilGetSystemParamInt(systemparam_id_name id, vm::ptr<s32> value)
 {
-	cellSysutil.warning("cellSysutilGetSystemParamInt(id=%s, value=*0x%x)", systemparam_id_name(id), value);
+	cellSysutil.warning("cellSysutilGetSystemParamInt(id=0x%x(%s), value=*0x%x)", id, id, value);
 
 	// TODO: load this information from config (preferably "sys/" group)
 
@@ -173,9 +198,9 @@ s32 cellSysutilGetSystemParamInt(s32 id, vm::ptr<s32> value)
 	return CELL_OK;
 }
 
-s32 cellSysutilGetSystemParamString(s32 id, vm::ptr<char> buf, u32 bufsize)
+s32 cellSysutilGetSystemParamString(systemparam_id_name id, vm::ptr<char> buf, u32 bufsize)
 {
-	cellSysutil.trace("cellSysutilGetSystemParamString(id=0x%x(%s), buf=*0x%x, bufsize=%d)", id, systemparam_id_name(id), buf, bufsize);
+	cellSysutil.trace("cellSysutilGetSystemParamString(id=0x%x(%s), buf=*0x%x, bufsize=%d)", id, id, buf, bufsize);
 
 	memset(buf.get_ptr(), 0, bufsize);
 
@@ -196,18 +221,20 @@ s32 cellSysutilGetSystemParamString(s32 id, vm::ptr<char> buf, u32 bufsize)
 	return CELL_OK;
 }
 
-s32 cellSysutilCheckCallback(PPUThread& CPU)
+s32 cellSysutilCheckCallback(ppu_thread& ppu)
 {
 	cellSysutil.trace("cellSysutilCheckCallback()");
 
-	while (auto func = Emu.GetCallbackManager().Check())
-	{
-		CHECK_EMU_STATUS;
+	const auto cbm = fxm::get_always<sysutil_cb_manager>();
 
-		if (s32 res = func(CPU))
+	while (auto&& func = cbm->get_cb())
+	{
+		if (s32 res = func(ppu))
 		{
 			return res;
 		}
+
+		CHECK_EMU_STATUS;
 	}
 
 	return CELL_OK;
@@ -217,12 +244,15 @@ s32 cellSysutilRegisterCallback(s32 slot, vm::ptr<CellSysutilCallback> func, vm:
 {
 	cellSysutil.warning("cellSysutilRegisterCallback(slot=%d, func=*0x%x, userdata=*0x%x)", slot, func, userdata);
 
-	if (slot >= sys_callbacks_t{}.size())
+	if (slot >= 4)
 	{
 		return CELL_SYSUTIL_ERROR_VALUE;
 	}
 
-	fxm::get_always<sys_callbacks_t>()->at(slot) = std::make_pair(func, userdata);
+	const auto cbm = fxm::get_always<sysutil_cb_manager>();
+
+	cbm->callbacks[slot] = std::make_pair(func, userdata);
+
 	return CELL_OK;
 }
 
@@ -230,12 +260,15 @@ s32 cellSysutilUnregisterCallback(u32 slot)
 {
 	cellSysutil.warning("cellSysutilUnregisterCallback(slot=%d)", slot);
 
-	if (slot >= sys_callbacks_t{}.size())
+	if (slot >= 4)
 	{
 		return CELL_SYSUTIL_ERROR_VALUE;
 	}
 
-	fxm::get_always<sys_callbacks_t>()->at(slot) = std::make_pair(vm::null, vm::null);
+	const auto cbm = fxm::get_always<sysutil_cb_manager>();
+
+	cbm->callbacks[slot] = std::make_pair(vm::null, vm::null);
+
 	return CELL_OK;
 }
 
@@ -260,7 +293,7 @@ s32 cellSysCacheMount(vm::ptr<CellSysCacheParam> param)
 	cellSysutil.warning("cellSysCacheMount(param=*0x%x)", param);
 
 	const std::string& cache_id = param->cacheId;
-	VERIFY(cache_id.size() < sizeof(param->cacheId));
+	verify(HERE), cache_id.size() < sizeof(param->cacheId);
 	
 	const std::string& cache_path = "/dev_hdd1/cache/" + cache_id + '/';
 	strcpy_trunc(param->getCachePath, cache_path);
@@ -347,37 +380,37 @@ s32 cellSysutilSetBgmPlaybackExtraParam()
 
 s32 cellSysutilRegisterCallbackDispatcher()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellSysutilPacketWrite()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellSysutilGameDataAssignVmc()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellSysutilGameDataExit()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellSysutilGameExit_I()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellSysutilGamePowerOff_I()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellSysutilGameReboot_I()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 extern void cellSysutil_SaveData_init();

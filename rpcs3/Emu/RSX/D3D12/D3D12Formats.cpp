@@ -20,7 +20,7 @@ D3D12_BLEND_OP get_blend_op(rsx::blend_equation op)
 	case rsx::blend_equation::reverse_substract_signed:
 		break;
 	}
-	throw EXCEPTION("Invalid or unsupported blend op (0x%x)", op);
+	fmt::throw_exception("Invalid or unsupported blend op (0x%x)" HERE, (u32)op);
 }
 
 D3D12_BLEND get_blend_factor(rsx::blend_factor factor)
@@ -45,7 +45,7 @@ D3D12_BLEND get_blend_factor(rsx::blend_factor factor)
 	case rsx::blend_factor::one_minus_constant_alpha:
 		return D3D12_BLEND_INV_BLEND_FACTOR;
 	}
-	throw EXCEPTION("Invalid blend factor (0x%x)", factor);
+	fmt::throw_exception("Invalid blend factor (0x%x)" HERE, (u32)factor);
 }
 
 D3D12_BLEND get_blend_factor_alpha(rsx::blend_factor factor)
@@ -70,7 +70,7 @@ D3D12_BLEND get_blend_factor_alpha(rsx::blend_factor factor)
 	case rsx::blend_factor::one_minus_constant_alpha:
 		return D3D12_BLEND_INV_BLEND_FACTOR;
 	}
-	throw EXCEPTION("Invalid blend alpha factor (0x%x)", factor);
+	fmt::throw_exception("Invalid blend alpha factor (0x%x)" HERE, (u32)factor);
 }
 
 /**
@@ -96,7 +96,7 @@ D3D12_LOGIC_OP get_logic_op(rsx::logic_op op)
 	case rsx::logic_op::logic_or_inverted: return D3D12_LOGIC_OP_OR_INVERTED;
 	case rsx::logic_op::logic_nand: return D3D12_LOGIC_OP_NAND;
 	}
-	throw EXCEPTION("Invalid logic op (0x%x)", op);
+	fmt::throw_exception("Invalid logic op (0x%x)" HERE, (u32)op);
 }
 
 /**
@@ -115,7 +115,7 @@ D3D12_STENCIL_OP get_stencil_op(rsx::stencil_op op)
 	case rsx::stencil_op::incr_wrap: return D3D12_STENCIL_OP_INCR;
 	case rsx::stencil_op::decr_wrap: return D3D12_STENCIL_OP_DECR;
 	}
-	throw EXCEPTION("Invalid stencil op (0x%x)", op);
+	fmt::throw_exception("Invalid stencil op (0x%x)" HERE, (u32)op);
 }
 
 D3D12_COMPARISON_FUNC get_compare_func(rsx::comparison_function op)
@@ -131,7 +131,7 @@ D3D12_COMPARISON_FUNC get_compare_func(rsx::comparison_function op)
 	case rsx::comparison_function::greater_or_equal: return D3D12_COMPARISON_FUNC_GREATER_EQUAL;
 	case rsx::comparison_function::always: return D3D12_COMPARISON_FUNC_ALWAYS;
 	}
-	throw EXCEPTION("Invalid or unsupported compare func (0x%x)", op);
+	fmt::throw_exception("Invalid or unsupported compare func (0x%x)" HERE, (u32)op);
 }
 
 DXGI_FORMAT get_texture_format(u8 format)
@@ -169,7 +169,7 @@ DXGI_FORMAT get_texture_format(u8 format)
 	case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8: return DXGI_FORMAT_R8G8_B8G8_UNORM;
 		break;
 	}
-	throw EXCEPTION("Invalid or unsupported texture format (0x%x)", format);
+	fmt::throw_exception("Invalid or unsupported texture format (0x%x)" HERE, (u32)format);
 }
 
 UINT get_texture_max_aniso(rsx::texture_max_anisotropy aniso)
@@ -185,7 +185,7 @@ UINT get_texture_max_aniso(rsx::texture_max_anisotropy aniso)
 	case rsx::texture_max_anisotropy::x12: return 12;
 	case rsx::texture_max_anisotropy::x16: return 16;
 	}
-	throw EXCEPTION("Invalid texture max aniso (0x%x)", aniso);
+	fmt::throw_exception("Invalid texture max aniso (0x%x)" HERE, (u32)aniso);
 }
 
 D3D12_TEXTURE_ADDRESS_MODE get_texture_wrap_mode(rsx::texture_wrap_mode wrap)
@@ -201,7 +201,7 @@ D3D12_TEXTURE_ADDRESS_MODE get_texture_wrap_mode(rsx::texture_wrap_mode wrap)
 	case rsx::texture_wrap_mode::mirror_once_border: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE;
 	case rsx::texture_wrap_mode::mirror_once_clamp: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE;
 	}
-	throw EXCEPTION("Invalid texture wrap mode (0x%x)", wrap);
+	fmt::throw_exception("Invalid texture wrap mode (0x%x)" HERE, (u32)wrap);
 }
 
 namespace
@@ -239,7 +239,7 @@ namespace
 			mip = D3D12_FILTER_TYPE_POINT;
 			return;
 		}
-		throw EXCEPTION("Invalid max filter");
+		fmt::throw_exception("Invalid max filter" HERE);
 	}
 
 	D3D12_FILTER_TYPE get_mag_filter(rsx::texture_magnify_filter mag_filter)
@@ -250,7 +250,7 @@ namespace
 		case rsx::texture_magnify_filter::linear: return D3D12_FILTER_TYPE_LINEAR;
 		case rsx::texture_magnify_filter::convolution_mag: return D3D12_FILTER_TYPE_LINEAR;
 		}
-		throw EXCEPTION("Invalid mag filter");
+		fmt::throw_exception("Invalid mag filter" HERE);
 	}
 }
 
@@ -277,7 +277,7 @@ D3D12_PRIMITIVE_TOPOLOGY get_primitive_topology(rsx::primitive_type draw_mode)
 	case rsx::primitive_type::quad_strip: return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	case rsx::primitive_type::polygon: return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	}
-	throw EXCEPTION("Invalid draw mode (0x%x)", draw_mode);
+	fmt::throw_exception("Invalid draw mode (0x%x)" HERE, (u32)draw_mode);
 }
 
 D3D12_PRIMITIVE_TOPOLOGY_TYPE get_primitive_topology_type(rsx::primitive_type draw_mode)
@@ -295,13 +295,14 @@ D3D12_PRIMITIVE_TOPOLOGY_TYPE get_primitive_topology_type(rsx::primitive_type dr
 	case rsx::primitive_type::polygon: return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	case rsx::primitive_type::line_loop: return D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
 	}
-	throw EXCEPTION("Invalid or unsupported draw mode (0x%x)", draw_mode);
+	fmt::throw_exception("Invalid or unsupported draw mode (0x%x)" HERE, (u32)draw_mode);
 }
 
 DXGI_FORMAT get_color_surface_format(rsx::surface_color_format format)
 {
 	switch (format)
 	{
+	case rsx::surface_color_format::x1r5g5b5_o1r5g5b5: return DXGI_FORMAT_B5G5R5A1_UNORM;
 	case rsx::surface_color_format::r5g6b5: return DXGI_FORMAT_B5G6R5_UNORM;
 	case rsx::surface_color_format::x8b8g8r8_o8b8g8r8:
 	case rsx::surface_color_format::x8b8g8r8_z8b8g8r8:
@@ -309,14 +310,15 @@ DXGI_FORMAT get_color_surface_format(rsx::surface_color_format format)
 	case rsx::surface_color_format::a8b8g8r8: return DXGI_FORMAT_B8G8R8A8_UNORM;
 	case rsx::surface_color_format::x8r8g8b8_o8r8g8b8:
 	case rsx::surface_color_format::x8r8g8b8_z8r8g8b8:
-	case rsx::surface_color_format::a8r8g8b8: return DXGI_FORMAT_R8G8B8A8_UNORM;
+	case rsx::surface_color_format::a8r8g8b8: 
+		return DXGI_FORMAT_R8G8B8A8_UNORM;
 	case rsx::surface_color_format::b8: return DXGI_FORMAT_R8_UNORM;
 	case rsx::surface_color_format::g8b8: return DXGI_FORMAT_R8G8_UNORM;
 	case rsx::surface_color_format::w16z16y16x16: return DXGI_FORMAT_R16G16B16A16_FLOAT;
 	case rsx::surface_color_format::w32z32y32x32: return DXGI_FORMAT_R32G32B32A32_FLOAT;
 	case rsx::surface_color_format::x32: return DXGI_FORMAT_R32_FLOAT;
 	}
-	throw EXCEPTION("Invalid format (0x%x)", format);
+	fmt::throw_exception("Invalid format (0x%x)" HERE, (u32)format);
 }
 
 DXGI_FORMAT get_depth_stencil_surface_format(rsx::surface_depth_format format)
@@ -326,7 +328,7 @@ DXGI_FORMAT get_depth_stencil_surface_format(rsx::surface_depth_format format)
 	case rsx::surface_depth_format::z16: return DXGI_FORMAT_D16_UNORM;
 	case rsx::surface_depth_format::z24s8: return DXGI_FORMAT_D24_UNORM_S8_UINT;
 	}
-	throw EXCEPTION("Invalid format (0x%x)", format);
+	fmt::throw_exception("Invalid format (0x%x)" HERE, (u32)format);
 }
 
 DXGI_FORMAT get_depth_stencil_surface_clear_format(rsx::surface_depth_format format)
@@ -336,7 +338,7 @@ DXGI_FORMAT get_depth_stencil_surface_clear_format(rsx::surface_depth_format for
 	case rsx::surface_depth_format::z16: return DXGI_FORMAT_D16_UNORM;
 	case rsx::surface_depth_format::z24s8: return DXGI_FORMAT_D24_UNORM_S8_UINT;
 	}
-	throw EXCEPTION("Invalid format (0x%x)", format);
+	fmt::throw_exception("Invalid format (0x%x)" HERE, (u32)format);
 }
 
 DXGI_FORMAT get_depth_stencil_typeless_surface_format(rsx::surface_depth_format format)
@@ -346,7 +348,7 @@ DXGI_FORMAT get_depth_stencil_typeless_surface_format(rsx::surface_depth_format 
 	case rsx::surface_depth_format::z16: return DXGI_FORMAT_R16_TYPELESS;
 	case rsx::surface_depth_format::z24s8: return DXGI_FORMAT_R24G8_TYPELESS;
 	}
-	throw EXCEPTION("Invalid format (0x%x)", format);
+	fmt::throw_exception("Invalid format (0x%x)" HERE, (u32)format);
 }
 
 DXGI_FORMAT get_depth_samplable_surface_format(rsx::surface_depth_format format)
@@ -356,7 +358,7 @@ DXGI_FORMAT get_depth_samplable_surface_format(rsx::surface_depth_format format)
 	case rsx::surface_depth_format::z16: return DXGI_FORMAT_R16_UNORM;
 	case rsx::surface_depth_format::z24s8: return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
 	}
-	throw EXCEPTION("Invalid format (0x%x)", format);
+	fmt::throw_exception("Invalid format (0x%x)" HERE, (u32)format);
 }
 
 BOOL get_front_face_ccw(rsx::front_face ffv)
@@ -366,7 +368,7 @@ BOOL get_front_face_ccw(rsx::front_face ffv)
 	case rsx::front_face::cw: return FALSE;
 	case rsx::front_face::ccw: return TRUE;
 	}
-	throw EXCEPTION("Invalid front face value (0x%x)", ffv);
+	fmt::throw_exception("Invalid front face value (0x%x)" HERE, (u32)ffv);
 }
 
 D3D12_CULL_MODE get_cull_face(rsx::cull_face cfv)
@@ -377,7 +379,7 @@ D3D12_CULL_MODE get_cull_face(rsx::cull_face cfv)
 		case rsx::cull_face::back: return D3D12_CULL_MODE_BACK;
 		case rsx::cull_face::front_and_back: return D3D12_CULL_MODE_NONE;
 	}
-	throw EXCEPTION("Invalid cull face value (0x%x)", cfv);
+	fmt::throw_exception("Invalid cull face value (0x%x)" HERE, (u32)cfv);
 }
 
 DXGI_FORMAT get_index_type(rsx::index_array_type index_type)
@@ -387,7 +389,7 @@ DXGI_FORMAT get_index_type(rsx::index_array_type index_type)
 	case rsx::index_array_type::u16: return DXGI_FORMAT_R16_UINT;
 	case rsx::index_array_type::u32: return DXGI_FORMAT_R32_UINT;
 	}
-	throw EXCEPTION("Invalid index_type (0x%x)", index_type);
+	fmt::throw_exception("Invalid index_type (0x%x)" HERE, (u32)index_type);
 }
 
 DXGI_FORMAT get_vertex_attribute_format(rsx::vertex_base_type type, u8 size)
@@ -451,14 +453,7 @@ DXGI_FORMAT get_vertex_attribute_format(rsx::vertex_base_type type, u8 size)
 	}
 	case rsx::vertex_base_type::cmp:
 	{
-		switch (size)
-		{
-		case 1: return DXGI_FORMAT_R16G16B16A16_SNORM;
-		case 2:
-		case 3:
-		case 4: throw EXCEPTION("Unsupported CMP vertex format with size > 1");
-		}
-		break;
+		return DXGI_FORMAT_R16G16B16A16_SNORM;
 	}
 	case rsx::vertex_base_type::ub256:
 	{
@@ -473,7 +468,7 @@ DXGI_FORMAT get_vertex_attribute_format(rsx::vertex_base_type type, u8 size)
 	}
 	}
 
-	throw EXCEPTION("Invalid or unsupported type or size (type=0x%x, size=0x%x)", type, size);
+	fmt::throw_exception("Invalid or unsupported type or size (type=0x%x, size=0x%x)" HERE, (u32)type, size);
 }
 
 D3D12_RECT get_scissor(u16 clip_origin_x, u16 clip_origin_y, u16 clip_w, u16 clip_h)

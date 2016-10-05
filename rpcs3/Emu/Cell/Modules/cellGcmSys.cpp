@@ -396,6 +396,8 @@ s32 _cellGcmInitBody(vm::pptr<CellGcmContextData> context, u32 cmdSize, u32 ioSi
 	ctrl.ref = -1;
 
 	const auto render = fxm::get<GSRender>();
+	render->intr_thread = idm::make_ptr<ppu_thread>("_gcm_intr_thread", 1, 0x4000);
+	render->intr_thread->run();
 	render->ctxt_addr = context.addr();
 	render->gcm_buffers.set(vm::alloc(sizeof(CellGcmDisplayInfo) * 8, vm::main));
 	render->zculls_addr = vm::alloc(sizeof(CellGcmZcullInfo) * 8, vm::main);
@@ -496,7 +498,7 @@ void cellGcmSetFlipStatus()
 	fxm::get<GSRender>()->flip_status = 0;
 }
 
-s32 cellGcmSetPrepareFlip(PPUThread& ppu, vm::ptr<CellGcmContextData> ctxt, u32 id)
+s32 cellGcmSetPrepareFlip(ppu_thread& ppu, vm::ptr<CellGcmContextData> ctxt, u32 id)
 {
 	cellGcmSys.trace("cellGcmSetPrepareFlip(ctx=*0x%x, id=0x%x)", ctxt, id);
 
@@ -525,7 +527,7 @@ s32 cellGcmSetPrepareFlip(PPUThread& ppu, vm::ptr<CellGcmContextData> ctxt, u32 
 	return id;
 }
 
-s32 cellGcmSetFlip(PPUThread& ppu, vm::ptr<CellGcmContextData> ctxt, u32 id)
+s32 cellGcmSetFlip(ppu_thread& ppu, vm::ptr<CellGcmContextData> ctxt, u32 id)
 {
 	cellGcmSys.trace("cellGcmSetFlip(ctxt=*0x%x, id=0x%x)", ctxt, id);
 
@@ -615,7 +617,7 @@ void cellGcmSetUserHandler(vm::ptr<void(u32)> handler)
 
 s32 cellGcmSetUserCommand()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 void cellGcmSetVBlankHandler(vm::ptr<void(u32)> handler)
@@ -636,7 +638,7 @@ s32 cellGcmSetWaitFlip(vm::ptr<CellGcmContextData> ctxt)
 
 s32 cellGcmSetWaitFlipUnsafe()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGcmSetZcull(u8 index, u32 offset, u32 width, u32 height, u32 cullStart, u32 zFormat, u32 aaFormat, u32 zCullDir, u32 zCullFormat, u32 sFunc, u32 sRef, u32 sMask)
@@ -723,7 +725,7 @@ s32 cellGcmGetCurrentDisplayBufferId(vm::ptr<u8> id)
 
 	if ((*id = fxm::get<GSRender>()->gcm_current_buffer) > UINT8_MAX)
 	{
-		throw EXCEPTION("Unexpected");
+		fmt::throw_exception("Unexpected" HERE);
 	}
 
 	return CELL_OK;
@@ -737,7 +739,7 @@ s32 cellGcmSetInvalidateTile()
 
 s32 cellGcmTerminate()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGcmDumpGraphicsError()
@@ -774,7 +776,7 @@ u64 cellGcmGetVBlankCount()
 
 s32 cellGcmSysGetLastVBlankTime()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGcmInitSystemMode(u64 mode)
@@ -937,7 +939,7 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
 {
 	cellGcmSys.warning("cellGcmMapEaIoAddressWithFlags(ea=0x%x, io=0x%x, size=0x%x, flags=0x%x)", ea, io, size, flags);
 
-	VERIFY(flags == 2 /*CELL_GCM_IOMAP_FLAG_STRICT_ORDERING*/);
+	verify(HERE), flags == 2 /*CELL_GCM_IOMAP_FLAG_STRICT_ORDERING*/;
 
 	return gcmMapEaIoAddress(ea, io, size, true);
 }
@@ -1134,21 +1136,21 @@ void cellGcmSetDefaultCommandBuffer()
 
 s32 cellGcmSetDefaultCommandBufferAndSegmentWordSize()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 //------------------------------------------------------------------------
 // Other
 //------------------------------------------------------------------------
 
-s32 _cellGcmSetFlipCommand(PPUThread& ppu, vm::ptr<CellGcmContextData> ctx, u32 id)
+s32 _cellGcmSetFlipCommand(ppu_thread& ppu, vm::ptr<CellGcmContextData> ctx, u32 id)
 {
 	cellGcmSys.trace("cellGcmSetFlipCommand(ctx=*0x%x, id=0x%x)", ctx, id);
 
 	return cellGcmSetPrepareFlip(ppu, ctx, id);
 }
 
-s32 _cellGcmSetFlipCommandWithWaitLabel(PPUThread& ppu, vm::ptr<CellGcmContextData> ctx, u32 id, u32 label_index, u32 label_value)
+s32 _cellGcmSetFlipCommandWithWaitLabel(ppu_thread& ppu, vm::ptr<CellGcmContextData> ctx, u32 id, u32 label_index, u32 label_value)
 {
 	cellGcmSys.trace("cellGcmSetFlipCommandWithWaitLabel(ctx=*0x%x, id=0x%x, label_index=0x%x, label_value=0x%x)", ctx, id, label_index, label_value);
 
@@ -1203,42 +1205,42 @@ s32 cellGcmSetTile(u8 index, u8 location, u32 offset, u32 size, u32 pitch, u8 co
 
 s32 _cellGcmFunc2()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _cellGcmFunc3()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _cellGcmFunc4()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _cellGcmFunc13()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _cellGcmFunc38()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGcmGpadGetStatus()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGcmGpadNotifyCaptureSurface()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGcmGpadCaptureSnapshot()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 
@@ -1261,7 +1263,7 @@ static std::pair<u32, u32> getNextCommandBufferBeginEnd(u32 current)
 static u32 getOffsetFromAddress(u32 address)
 {
 	const u32 upper = offsetTable.ioAddress[address >> 20]; // 12 bits
-	EXPECTS(upper != 0xFFFF);
+	verify(HERE), (upper != 0xFFFF);
 	return (upper << 20) | (address & 0xFFFFF);
 }
 
@@ -1295,7 +1297,7 @@ s32 cellGcmCallback(vm::ptr<CellGcmContextData> context, u32 count)
 	std::pair<u32, u32> newCommandBuffer = getNextCommandBufferBeginEnd(context->current.addr());
 	u32 offset = getOffsetFromAddress(newCommandBuffer.first);
 	// Write jump instruction
-	*context->current = CELL_GCM_METHOD_FLAG_JUMP | offset;
+	*context->current = RSX_METHOD_OLD_JUMP_CMD | offset;
 	// Update current command buffer
 	context->begin.set(newCommandBuffer.first);
 	context->current.set(newCommandBuffer.first);

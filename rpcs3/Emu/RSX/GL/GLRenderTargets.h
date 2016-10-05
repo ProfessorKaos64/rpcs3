@@ -1,6 +1,6 @@
 #pragma once
 #include "../Common/surface_store.h"
-#include "gl_helpers.h"
+#include "GLHelpers.h"
 #include "stdafx.h"
 #include "../RSXThread.h"
 
@@ -122,6 +122,7 @@ struct gl_render_target_traits
 			.type(format.type)
 			.format(format.format)
 			.internal_format(format.internal_format)
+			.swizzle(gl::texture::channel::r, gl::texture::channel::r, gl::texture::channel::r, gl::texture::channel::r)
 			.wrap(gl::texture::wrap::clamp_to_border, gl::texture::wrap::clamp_to_border, gl::texture::wrap::clamp_to_border)
 			.apply();
 
@@ -179,7 +180,7 @@ struct gl_render_target_traits
 	static
 	gsl::span<const gsl::byte> map_downloaded_buffer(const std::vector<u8> &buffer)
 	{
-		return{ reinterpret_cast<const gsl::byte*>(buffer.data()), gsl::narrow<int>(buffer.size()) };
+		return{ reinterpret_cast<const gsl::byte*>(buffer.data()), ::narrow<int>(buffer.size()) };
 	}
 
 	static

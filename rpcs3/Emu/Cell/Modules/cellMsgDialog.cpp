@@ -12,12 +12,12 @@ extern logs::channel cellSysutil;
 
 s32 cellMsgDialogOpen()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellMsgDialogOpen2(u32 type, vm::cptr<char> msgString, vm::ptr<CellMsgDialogCallback> callback, vm::ptr<void> userData, vm::ptr<void> extParam)
 {
-	cellSysutil.warning("cellMsgDialogOpen2(type=0x%x, msgString=*0x%x, callback=*0x%x, userData=*0x%x, extParam=*0x%x)", type, msgString, callback, userData, extParam);
+	cellSysutil.warning("cellMsgDialogOpen2(type=0x%x, msgString=%s, callback=*0x%x, userData=*0x%x, extParam=*0x%x)", type, msgString, callback, userData, extParam);
 
 	if (!msgString || std::strlen(msgString.get_ptr()) >= 0x200 || type & -0x33f8)
 	{
@@ -61,7 +61,7 @@ s32 cellMsgDialogOpen2(u32 type, vm::cptr<char> msgString, vm::ptr<CellMsgDialog
 	default: return CELL_MSGDIALOG_ERROR_PARAM;
 	}
 
-	const auto dlg = fxm::import<MsgDialogBase>(PURE_EXPR(Emu.GetCallbacks().get_msg_dialog()));
+	const auto dlg = fxm::import<MsgDialogBase>(Emu.GetCallbacks().get_msg_dialog);
 
 	if (!dlg)
 	{
@@ -92,7 +92,7 @@ s32 cellMsgDialogOpen2(u32 type, vm::cptr<char> msgString, vm::ptr<CellMsgDialog
 		{
 			if (callback)
 			{
-				Emu.GetCallbackManager().Register([=](PPUThread& ppu) -> s32
+				sysutil_register_cb([=](ppu_thread& ppu) -> s32
 				{
 					callback(ppu, status, userData);
 					return CELL_OK;
@@ -121,7 +121,7 @@ s32 cellMsgDialogOpen2(u32 type, vm::cptr<char> msgString, vm::ptr<CellMsgDialog
 	return CELL_OK;
 }
 
-s32 cellMsgDialogOpenErrorCode(PPUThread& ppu, u32 errorCode, vm::ptr<CellMsgDialogCallback> callback, vm::ptr<void> userData, vm::ptr<void> extParam)
+s32 cellMsgDialogOpenErrorCode(ppu_thread& ppu, u32 errorCode, vm::ptr<CellMsgDialogCallback> callback, vm::ptr<void> userData, vm::ptr<void> extParam)
 {
 	cellSysutil.warning("cellMsgDialogOpenErrorCode(errorCode=0x%x, callback=*0x%x, userData=*0x%x, extParam=*0x%x)", errorCode, callback, userData, extParam);
 
@@ -200,7 +200,7 @@ s32 cellMsgDialogOpenErrorCode(PPUThread& ppu, u32 errorCode, vm::ptr<CellMsgDia
 
 s32 cellMsgDialogOpenSimulViewWarning()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellMsgDialogClose(f32 delay)
@@ -249,17 +249,13 @@ s32 cellMsgDialogAbort()
 		return CELL_SYSUTIL_ERROR_BUSY;
 	}
 
-	if (!fxm::remove<MsgDialogBase>())
-	{
-		throw EXCEPTION("Failed to remove MsgDialog object");
-	}
-
+	verify(HERE), fxm::remove<MsgDialogBase>();
 	return CELL_OK;
 }
 
 s32 cellMsgDialogProgressBarSetMsg(u32 progressBarIndex, vm::cptr<char> msgString)
 {
-	cellSysutil.warning("cellMsgDialogProgressBarSetMsg(progressBarIndex=%d, msgString=*0x%x)", progressBarIndex, msgString);
+	cellSysutil.warning("cellMsgDialogProgressBarSetMsg(progressBarIndex=%d, msgString=%s)", progressBarIndex, msgString);
 
 	const auto dlg = fxm::get<MsgDialogBase>();
 
@@ -297,7 +293,10 @@ s32 cellMsgDialogProgressBarReset(u32 progressBarIndex)
 		return CELL_MSGDIALOG_ERROR_PARAM;
 	}
 
-	Emu.CallAfter(COPY_EXPR(dlg->ProgressBarReset(progressBarIndex)));
+	Emu.CallAfter([=]
+	{
+		dlg->ProgressBarReset(progressBarIndex);
+	});
 
 	return CELL_OK;
 }
@@ -318,7 +317,10 @@ s32 cellMsgDialogProgressBarInc(u32 progressBarIndex, u32 delta)
 		return CELL_MSGDIALOG_ERROR_PARAM;
 	}
 
-	Emu.CallAfter(COPY_EXPR(dlg->ProgressBarInc(progressBarIndex, delta)));
+	Emu.CallAfter([=]
+	{
+		dlg->ProgressBarInc(progressBarIndex, delta);
+	});
 
 	return CELL_OK;
 }

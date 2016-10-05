@@ -1,73 +1,284 @@
 #include "StrFmt.h"
 #include "BEType.h"
 #include "StrUtil.h"
+#include "cfmt.h"
 
-#include <cassert>
-#include <array>
-#include <memory>
 #include <algorithm>
 
-std::string v128::to_hex() const
+#ifdef _WIN32
+#include <Windows.h>
+#else
+#include <errno.h>
+#endif
+
+void fmt_class_string<const void*>::format(std::string& out, u64 arg)
 {
-	return fmt::format("%016llx%016llx", _u64[1], _u64[0]);
-}
-
-std::string v128::to_xyzw() const
-{
-	return fmt::format("x: %g y: %g z: %g w: %g", _f[3], _f[2], _f[1], _f[0]);
-}
-
-std::string fmt::unsafe_vformat(const char* fmt, va_list _args) noexcept
-{
-	// Fixed stack buffer for the first attempt
-	std::array<char, 4096> fixed_buf;
-
-	// Possibly dynamically allocated buffer for the second attempt
-	std::unique_ptr<char[]> buf;
-
-	// Pointer to the current buffer
-	char* buf_addr = fixed_buf.data();
-
-	for (std::size_t buf_size = fixed_buf.size();;)
+	if (arg)
 	{
-		va_list args;
-		va_copy(args, _args);
-
-#ifndef _MSC_VER
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-security"
-#endif
-		const std::size_t len = std::vsnprintf(buf_addr, buf_size, fmt, args);
-#ifndef _MSC_VER
-#pragma GCC diagnostic pop
-#endif
-		va_end(args);
-
-		assert(len <= INT_MAX);
-
-		if (len < buf_size)
-		{
-			return{ buf_addr, len };
-		}
-
-		buf.reset(buf_addr = new char[buf_size = len + 1]);
+		fmt::append(out, "%p", reinterpret_cast<const void*>(static_cast<std::uintptr_t>(arg)));
+	}
+	else
+	{
+		out += "(NULL)";		
 	}
 }
 
-std::string fmt::unsafe_format(const char* fmt...) noexcept
+void fmt_class_string<const char*>::format(std::string& out, u64 arg)
 {
-	va_list args;
-	va_start(args, fmt);
-	auto result = unsafe_vformat(fmt, args);
-	va_end(args);
-
-	return result;
+	if (arg)
+	{
+		out += reinterpret_cast<const char*>(static_cast<std::uintptr_t>(arg));
+	}
+	else
+	{
+		out += "(NULL)";
+	}
 }
 
-fmt::exception_base::exception_base(const char* fmt...)
-	: std::runtime_error((va_start(m_args, fmt), unsafe_vformat(fmt, m_args)))
+template <>
+void fmt_class_string<std::string>::format(std::string& out, u64 arg)
 {
-	va_end(m_args);
+	out += get_object(arg).c_str(); // TODO?
+}
+
+template <>
+void fmt_class_string<std::vector<char>>::format(std::string& out, u64 arg)
+{
+	const std::vector<char>& obj = get_object(arg);
+	out.append(obj.cbegin(), obj.cend());
+}
+
+template <>
+void fmt_class_string<char>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#hhx", static_cast<char>(arg));
+}
+
+template <>
+void fmt_class_string<uchar>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#hhx", static_cast<uchar>(arg));
+}
+
+template <>
+void fmt_class_string<schar>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#hhx", static_cast<schar>(arg));
+}
+
+template <>
+void fmt_class_string<short>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#hx", static_cast<short>(arg));
+}
+
+template <>
+void fmt_class_string<ushort>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#hx", static_cast<ushort>(arg));
+}
+
+template <>
+void fmt_class_string<int>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#x", static_cast<int>(arg));
+}
+
+template <>
+void fmt_class_string<uint>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#x", static_cast<uint>(arg));
+}
+
+template <>
+void fmt_class_string<long>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#lx", static_cast<long>(arg));
+}
+
+template <>
+void fmt_class_string<ulong>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#lx", static_cast<ulong>(arg));
+}
+
+template <>
+void fmt_class_string<llong>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#llx", static_cast<llong>(arg));
+}
+
+template <>
+void fmt_class_string<ullong>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%#llx", static_cast<ullong>(arg));
+}
+
+template <>
+void fmt_class_string<float>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%gf", static_cast<float>(reinterpret_cast<f64&>(arg)));
+}
+
+template <>
+void fmt_class_string<double>::format(std::string& out, u64 arg)
+{
+	fmt::append(out, "%g", reinterpret_cast<f64&>(arg));
+}
+
+template <>
+void fmt_class_string<bool>::format(std::string& out, u64 arg)
+{
+	out += arg ? "true" : "false";
+}
+
+template <>
+void fmt_class_string<v128>::format(std::string& out, u64 arg)
+{
+	const v128& vec = get_object(arg);
+	fmt::append(out, "0x%016llx%016llx", vec._u64[1], vec._u64[0]);
+}
+
+namespace fmt
+{
+	void raw_error(const char* msg)
+	{
+		throw std::runtime_error{msg};
+	}
+
+	void raw_verify_error(const char* msg, const fmt_type_info* sup, u64 arg)
+	{
+		std::string out{"Verification failed"};
+
+		// Print error code (may be irrelevant)
+#ifdef _WIN32
+		if (DWORD error = GetLastError())
+		{
+			fmt::append(out, " (e%#x)", error);
+		}
+#else
+		if (int error = errno)
+		{
+			fmt::append(out, " (e%d)", error);
+		}
+#endif
+
+		if (sup)
+		{
+			out += " (";
+			sup->fmt_string(out, arg); // Print value
+			out += ")";
+		}
+
+		if (msg)
+		{
+			out += ": ";
+			out += msg;
+		}
+
+		throw std::runtime_error{out};
+	}
+
+	void raw_narrow_error(const char* msg, const fmt_type_info* sup, u64 arg)
+	{
+		std::string out{"Narrow error"};
+
+		if (sup)
+		{
+			out += " (";
+			sup->fmt_string(out, arg); // Print value
+			out += ")";
+		}
+
+		if (msg)
+		{
+			out += ": ";
+			out += msg;
+		}
+
+		throw std::range_error{out};
+	}
+
+	// Hidden template
+	template <typename T>
+	void raw_throw_exception(const char* fmt, const fmt_type_info* sup, const u64* args)
+	{
+		std::string out;
+		raw_append(out, fmt, sup, args);
+		throw T{out};
+	}
+
+	// Explicit instantiations (not exhaustive)
+	template void raw_throw_exception<std::runtime_error>(const char*, const fmt_type_info*, const u64*);
+	template void raw_throw_exception<std::logic_error>(const char*, const fmt_type_info*, const u64*);
+	template void raw_throw_exception<std::domain_error>(const char*, const fmt_type_info*, const u64*);
+	template void raw_throw_exception<std::invalid_argument>(const char*, const fmt_type_info*, const u64*);
+	template void raw_throw_exception<std::out_of_range>(const char*, const fmt_type_info*, const u64*);
+	template void raw_throw_exception<std::range_error>(const char*, const fmt_type_info*, const u64*);
+	template void raw_throw_exception<std::overflow_error>(const char*, const fmt_type_info*, const u64*);
+	template void raw_throw_exception<std::underflow_error>(const char*, const fmt_type_info*, const u64*);
+
+	struct cfmt_src;
+}
+
+// Temporary implementation
+struct fmt::cfmt_src
+{
+	const fmt_type_info* sup;
+	const u64* args;
+
+	bool test(std::size_t index) const
+	{
+		if (!sup[index].fmt_string)
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	template <typename T>
+	T get(std::size_t index) const
+	{
+		return reinterpret_cast<const T&>(args[index]);
+	}
+
+	void skip(std::size_t extra)
+	{
+		++sup += extra;
+		++args += extra;
+	}
+
+	std::size_t fmt_string(std::string& out, std::size_t extra) const
+	{
+		const std::size_t start = out.size();
+		sup[extra].fmt_string(out, args[extra]);
+		return out.size() - start;
+	}
+
+	// Returns type size (0 if unknown, pointer, unsigned, assumed max)
+	std::size_t type(std::size_t extra) const
+	{
+// Hack: use known function pointers to determine type
+#define TYPE(type) \
+	if (sup[extra].fmt_string == &fmt_class_string<type>::format) return sizeof(type);
+
+		TYPE(int);
+		TYPE(llong);
+		TYPE(schar);
+		TYPE(short);
+		if (std::is_signed<char>::value) TYPE(char);
+		TYPE(long);
+
+#undef TYPE
+
+		return 0;
+	}
+};
+
+void fmt::raw_append(std::string& out, const char* fmt, const fmt_type_info* sup, const u64* args) noexcept
+{
+	cfmt_append(out, fmt, cfmt_src{sup, args});
 }
 
 std::string fmt::replace_first(const std::string& src, const std::string& from, const std::string& to)
@@ -82,7 +293,7 @@ std::string fmt::replace_first(const std::string& src, const std::string& from, 
 	return (pos ? src.substr(0, pos) + to : to) + std::string(src.c_str() + pos + from.length());
 }
 
-std::string fmt::replace_all(const std::string &src, const std::string& from, const std::string& to)
+std::string fmt::replace_all(const std::string& src, const std::string& from, const std::string& to)
 {
 	std::string target = src;
 	for (auto pos = target.find(from); pos != std::string::npos; pos = target.find(from, pos + 1))
@@ -102,7 +313,7 @@ std::vector<std::string> fmt::split(const std::string& source, std::initializer_
 
 	for (size_t cursor_end = 0; cursor_end < source.length(); ++cursor_end)
 	{
-		for (auto &separator : separators)
+		for (auto& separator : separators)
 		{
 			if (strncmp(source.c_str() + cursor_end, separator.c_str(), separator.length()) == 0)
 			{
@@ -111,7 +322,7 @@ std::vector<std::string> fmt::split(const std::string& source, std::initializer_
 					result.push_back(candidate);
 
 				cursor_begin = cursor_end + separator.length();
-				cursor_end = cursor_begin - 1;
+				cursor_end   = cursor_begin - 1;
 				break;
 			}
 		}
@@ -130,7 +341,7 @@ std::string fmt::trim(const std::string& source, const std::string& values)
 	std::size_t begin = source.find_first_not_of(values);
 
 	if (begin == source.npos)
-		return{};
+		return {};
 
 	return source.substr(begin, source.find_last_not_of(values) + 1);
 }
@@ -143,7 +354,7 @@ std::string fmt::to_upper(const std::string& string)
 	return result;
 }
 
-bool fmt::match(const std::string &source, const std::string &mask)
+bool fmt::match(const std::string& source, const std::string& mask)
 {
 	std::size_t source_position = 0, mask_position = 0;
 

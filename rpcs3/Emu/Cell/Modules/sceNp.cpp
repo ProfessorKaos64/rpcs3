@@ -103,28 +103,28 @@ s32 npDrmIsAvailable(u32 k_licensee_addr, vm::cptr<char> drm_path)
 
 s32 sceNpDrmIsAvailable(u32 k_licensee_addr, vm::cptr<char> drm_path)
 {
-	sceNp.warning("sceNpDrmIsAvailable(k_licensee=*0x%x, drm_path=*0x%x)", k_licensee_addr, drm_path);
+	sceNp.warning("sceNpDrmIsAvailable(k_licensee=*0x%x, drm_path=%s)", k_licensee_addr, drm_path);
 
 	return npDrmIsAvailable(k_licensee_addr, drm_path);
 }
 
 s32 sceNpDrmIsAvailable2(u32 k_licensee_addr, vm::cptr<char> drm_path)
 {
-	sceNp.warning("sceNpDrmIsAvailable2(k_licensee=*0x%x, drm_path=*0x%x)", k_licensee_addr, drm_path);
+	sceNp.warning("sceNpDrmIsAvailable2(k_licensee=*0x%x, drm_path=%s)", k_licensee_addr, drm_path);
 
 	return npDrmIsAvailable(k_licensee_addr, drm_path);
 }
 
 s32 sceNpDrmVerifyUpgradeLicense(vm::cptr<char> content_id)
 {
-	sceNp.todo("sceNpDrmVerifyUpgradeLicense(content_id=*0x%x)", content_id);
+	sceNp.todo("sceNpDrmVerifyUpgradeLicense(content_id=%s)", content_id);
 
 	return CELL_OK;
 }
 
 s32 sceNpDrmVerifyUpgradeLicense2(vm::cptr<char> content_id)
 {
-	sceNp.todo("sceNpDrmVerifyUpgradeLicense2(content_id=*0x%x)", content_id);
+	sceNp.todo("sceNpDrmVerifyUpgradeLicense2(content_id=%s)", content_id);
 
 	return CELL_OK;
 }
@@ -135,9 +135,9 @@ s32 sceNpDrmExecuteGamePurchase()
 	return CELL_OK;
 }
 
-s32 sceNpDrmGetTimelimit(vm::ptr<const char> path, vm::ptr<u64> time_remain)
+s32 sceNpDrmGetTimelimit(vm::cptr<char> path, vm::ptr<u64> time_remain)
 {
-	sceNp.warning("sceNpDrmGetTimelimit(path=*0x%x, time_remain=*0x%x)", path, time_remain);
+	sceNp.warning("sceNpDrmGetTimelimit(path=%s, time_remain=*0x%x)", path, time_remain);
 
 	*time_remain = 0x7FFFFFFFFFFFFFFFULL;
 
@@ -1478,47 +1478,47 @@ s32 _sceNpSysutilClientFree()
 
 s32 _Z33_sce_np_sysutil_send_empty_packetiPN16sysutil_cxmlutil11FixedMemoryEPKcS3_()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z27_sce_np_sysutil_send_packetiRN4cxml8DocumentE()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z36_sce_np_sysutil_recv_packet_fixedmemiPN16sysutil_cxmlutil11FixedMemoryERN4cxml8DocumentERNS2_7ElementE()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z40_sce_np_sysutil_recv_packet_fixedmem_subiPN16sysutil_cxmlutil11FixedMemoryERN4cxml8DocumentERNS2_7ElementE()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z27_sce_np_sysutil_recv_packetiRN4cxml8DocumentERNS_7ElementE()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z29_sce_np_sysutil_cxml_set_npidRN4cxml8DocumentERNS_7ElementEPKcPK7SceNpId()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z31_sce_np_sysutil_send_packet_subiRN4cxml8DocumentE()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z37sce_np_matching_set_matching2_runningb()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 _Z32_sce_np_sysutil_cxml_prepare_docPN16sysutil_cxmlutil11FixedMemoryERN4cxml8DocumentEPKcRNS2_7ElementES6_i()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 

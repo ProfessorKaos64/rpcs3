@@ -52,6 +52,9 @@ void VKFragmentDecompilerThread::insertHeader(std::stringstream & OS)
 
 void VKFragmentDecompilerThread::insertIntputs(std::stringstream & OS)
 {
+	//It is possible for the two_sided_enabled flag to be set without actual 2-sided outputs
+	bool two_sided_enabled = m_prog.front_back_color_enabled && (m_prog.back_color_diffuse_output || m_prog.back_color_specular_output);
+
 	for (const ParamType& PT : m_parr.params[PF_PARAM_IN])
 	{
 		for (const ParamItem& PI : PT.items)
@@ -62,7 +65,7 @@ void VKFragmentDecompilerThread::insertIntputs(std::stringstream & OS)
 			const vk::varying_register_t &reg = vk::get_varying_register(PI.name);
 			std::string var_name = PI.name;
 
-			if (m_prog.front_back_color_enabled)
+			if (two_sided_enabled)
 			{
 				if (m_prog.back_color_diffuse_output && var_name == "diff_color")
 					var_name = "back_diff_color";
@@ -78,15 +81,16 @@ void VKFragmentDecompilerThread::insertIntputs(std::stringstream & OS)
 		}
 	}
 
-	if (m_prog.front_back_color_enabled)
+	if (two_sided_enabled)
 	{
-		if (m_prog.front_color_diffuse_output)
+		//Only include the front counterparts if the default output is for back only and exists.
+		if (m_prog.front_color_diffuse_output && m_prog.back_color_diffuse_output)
 		{
 			const vk::varying_register_t &reg = vk::get_varying_register("front_diff_color");
 			OS << "layout(location=" << reg.reg_location << ") in vec4 front_diff_color;" << std::endl;
 		}
 
-		if (m_prog.front_color_specular_output)
+		if (m_prog.front_color_specular_output && m_prog.back_color_specular_output)
 		{
 			const vk::varying_register_t &reg = vk::get_varying_register("front_spec_color");
 			OS << "layout(location=" << reg.reg_location << ") in vec4 front_spec_color;" << std::endl;
@@ -104,16 +108,24 @@ void VKFragmentDecompilerThread::insertOutputs(std::stringstream & OS)
 		{ "ocol3", m_ctrl & CELL_GCM_SHADER_CONTROL_32_BITS_EXPORTS ? "r4" : "h8" },
 	};
 
-	for (int i = 0; i < sizeof(table) / sizeof(*table); ++i)
+	//We always bind the first usable image to index 0, even if surface type is surface_type::b
+	//If only surface 1 is being written to, redirect to output 0
+
+	if (m_parr.HasParam(PF_PARAM_NONE, "vec4", table[1].second) && !m_parr.HasParam(PF_PARAM_NONE, "vec4", table[0].second))
+		OS << "layout(location=0) out vec4 " << table[1].first << ";" << std::endl;
+	else
 	{
-		if (m_parr.HasParam(PF_PARAM_NONE, "vec4", table[i].second))
-			OS << "layout(location=" << i << ") " << "out vec4 " << table[i].first << ";" << std::endl;
+		for (int i = 0; i < sizeof(table) / sizeof(*table); ++i)
+		{
+			if (m_parr.HasParam(PF_PARAM_NONE, "vec4", table[i].second))
+				OS << "layout(location=" << i << ") " << "out vec4 " << table[i].first << ";" << std::endl;
+		}
 	}
 }
 
 void VKFragmentDecompilerThread::insertConstants(std::stringstream & OS)
 {
-	int location = 2;
+	int location = 0;
 
 	for (const ParamType& PT : m_parr.params[PF_PARAM_UNIFORM])
 	{
@@ -199,49 +211,92 @@ namespace vk
 			return;
 		}
 	}
+
+	std::string insert_texture_fetch(const RSXFragmentProgram& prog, int index)
+	{
+		std::string tex_name = "tex" + std::to_string(index);
+		std::string coord_name = "tc" + std::to_string(index);
+
+		switch (prog.get_texture_dimension(index))
+		{
+		case rsx::texture_dimension_extended::texture_dimension_1d: return "texture(" + tex_name + ", " + coord_name + ".x)";
+		case rsx::texture_dimension_extended::texture_dimension_2d: return "texture(" + tex_name + ", " + coord_name + ".xy)";
+		case rsx::texture_dimension_extended::texture_dimension_3d:
+		case rsx::texture_dimension_extended::texture_dimension_cubemap: return "texture(" + tex_name + ", " + coord_name + ".xyz)";
+		}
+	}
 }
 
 void VKFragmentDecompilerThread::insertMainStart(std::stringstream & OS)
 {
 	vk::insert_glsl_legacy_function(OS);
 
-	OS << "void main ()" << std::endl;
+	const std::set<std::string> output_values =
+	{
+		"r0", "r1", "r2", "r3", "r4",
+		"h0", "h2", "h4", "h6", "h8"
+	};
+
+	std::string parameters = "";
+	for (auto &reg_name : output_values)
+	{
+		if (m_parr.HasParam(PF_PARAM_NONE, "vec4", reg_name))
+		{
+			if (parameters.length())
+				parameters += ", ";
+
+			parameters += "inout vec4 " + reg_name;
+		}
+	}
+
+	OS << "void fs_main(" << parameters << ")" << std::endl;
 	OS << "{" << std::endl;
 
 	for (const ParamType& PT : m_parr.params[PF_PARAM_NONE])
 	{
 		for (const ParamItem& PI : PT.items)
 		{
+			if (output_values.find(PI.name) != output_values.end())
+				continue;
+
 			OS << "	" << PT.type << " " << PI.name;
 			if (!PI.value.empty())
 				OS << " = " << PI.value;
+
 			OS << ";" << std::endl;
 		}
 	}
 
 	OS << "	vec4 ssa = gl_FrontFacing ? vec4(1.) : vec4(-1.);\n";
+	OS << "	vec4 wpos = gl_FragCoord;\n";
 
-	// search if there is fogc in inputs
+	//Flip wpos in Y
+	//We could optionally export wpos from the VS, but this is so much easier
+	if (m_prog.origin_mode == rsx::window_origin::bottom)
+		OS << "	wpos.y = " << std::to_string(m_prog.height) << " - wpos.y;\n";
+
+	bool two_sided_enabled = m_prog.front_back_color_enabled && (m_prog.back_color_diffuse_output || m_prog.back_color_specular_output);
+
+	//Some registers require redirection
 	for (const ParamType& PT : m_parr.params[PF_PARAM_IN])
 	{
 		for (const ParamItem& PI : PT.items)
 		{
-			if (m_prog.front_back_color_enabled)
+			if (two_sided_enabled)
 			{
 				if (PI.name == "spec_color")
 				{
-					if (m_prog.back_color_specular_output || m_prog.front_color_specular_output)
+					//Only redirect/rename variables if the back_color exists
+					if (m_prog.back_color_specular_output)
 					{
 						if (m_prog.back_color_specular_output && m_prog.front_color_specular_output)
 						{
 							OS << "	vec4 spec_color = gl_FrontFacing ? front_spec_color : back_spec_color;\n";
 						}
-						else if (m_prog.back_color_specular_output)
+						else
 						{
 							OS << "	vec4 spec_color = back_spec_color;\n";
 						}
-						else
-							OS << "	vec4 spec_color = front_spec_color;\n";
 					}
 
 					continue;
@@ -249,18 +304,17 @@ void VKFragmentDecompilerThread::insertMainStart(std::stringstream & OS)
 
 				else if (PI.name == "diff_color")
 				{
-					if (m_prog.back_color_diffuse_output || m_prog.front_color_diffuse_output)
+					//Only redirect/rename variables if the back_color exists
+					if (m_prog.back_color_diffuse_output)
 					{
 						if (m_prog.back_color_diffuse_output && m_prog.front_color_diffuse_output)
 						{
 							OS << "	vec4 diff_color = gl_FrontFacing ? front_diff_color : back_diff_color;\n";
 						}
-						else if (m_prog.back_color_diffuse_output)
+						else
 						{
 							OS << "	vec4 diff_color = back_diff_color;\n";
 						}
-						else
-							OS << "	vec4 diff_color = front_diff_color;\n";
 					}
 
 					continue;
@@ -270,7 +324,7 @@ void VKFragmentDecompilerThread::insertMainStart(std::stringstream & OS)
 			if (PI.name == "fogc")
 			{
 				vk::insert_fog_declaration(OS, m_prog.fog_equation);
-				return;
+				continue;
 			}
 		}
 	}
@@ -286,15 +340,78 @@ void VKFragmentDecompilerThread::insertMainEnd(std::stringstream & OS)
 		{ "ocol3", m_ctrl & CELL_GCM_SHADER_CONTROL_32_BITS_EXPORTS ? "r4" : "h8" },
 	};
 
-	std::string first_output_name;
+	const std::set<std::string> output_values =
+	{
+		"r0", "r1", "r2", "r3", "r4",
+		"h0", "h2", "h4", "h6", "h8"
+	};
+
+	std::string first_output_name = "";
+	std::string color_output_block = "";
+
 	for (int i = 0; i < sizeof(table) / sizeof(*table); ++i)
 	{
 		if (m_parr.HasParam(PF_PARAM_NONE, "vec4", table[i].second))
 		{
-			OS << "	" << table[i].first << " = " << table[i].second << ";" << std::endl;
-			if (first_output_name.empty()) first_output_name = table[i].first;
+			color_output_block += "	" + table[i].first + " = " + table[i].second + ";\n";
+			if (first_output_name.empty()) first_output_name = table[i].second;
 		}
 	}
+
+	if (!first_output_name.empty())
+	{
+		auto make_comparison_test = [](rsx::comparison_function compare_func, const std::string &test, const std::string &a, const std::string &b) -> std::string
+		{
+			std::string compare;
+			switch (compare_func)
+			{
+			case rsx::comparison_function::equal:            compare = " == "; break;
+			case rsx::comparison_function::not_equal:        compare = " != "; break;
+			case rsx::comparison_function::less_or_equal:    compare = " <= "; break;
+			case rsx::comparison_function::less:             compare = " < ";  break;
+			case rsx::comparison_function::greater:          compare = " > ";  break;
+			case rsx::comparison_function::greater_or_equal: compare = " >= "; break;
+			default:
+				return "";
+			}
+
+			return "	if (" + test + "!(" + a + compare + b + ")) discard;\n";
+		};
+
+		for (u8 index = 0; index < 16; ++index)
+		{
+			if (m_prog.textures_alpha_kill[index])
+			{
+				std::string fetch_texture = vk::insert_texture_fetch(m_prog, index) + ".a";
+				OS << make_comparison_test((rsx::comparison_function)m_prog.textures_zfunc[index], "", "0", fetch_texture);
+			}
+		}
+
+		OS << make_comparison_test(m_prog.alpha_func, "bool(alpha_test) && ", first_output_name + ".a", "alpha_ref");
+	}
+
+	OS << "}" << std::endl << std::endl;
+
+	OS << "void main()" << std::endl;
+	OS << "{" << std::endl;
+
+	std::string parameters = "";
+	for (auto &reg_name : output_values)
+	{
+		if (m_parr.HasParam(PF_PARAM_NONE, "vec4", reg_name))
+		{
+			if (parameters.length())
+				parameters += ", ";
+
+			parameters += reg_name;
+			OS << "	vec4 " << reg_name << " = vec4(0.);" << std::endl;
+		}
+	}
+
+	OS << std::endl << "	fs_main(" + parameters + ");" << std::endl << std::endl;
+
+	//Append the color output assignments
+	OS << color_output_block;
 
 	if (m_ctrl & CELL_GCM_SHADER_CONTROL_DEPTH_EXPORT)
 	{
@@ -305,31 +422,6 @@ void VKFragmentDecompilerThread::insertMainEnd(std::stringstream & OS)
 			*/
 			//OS << ((m_ctrl & CELL_GCM_SHADER_CONTROL_32_BITS_EXPORTS) ? "\tgl_FragDepth = r1.z;\n" : "\tgl_FragDepth = h0.z;\n") << std::endl;
 			OS << "	gl_FragDepth = r1.z;\n";
-		}
-	}
-
-	if (!first_output_name.empty())
-	{
-		switch (m_prog.alpha_func)
-		{
-		case rsx::comparison_function::equal:
-			OS << "	if (bool(alpha_test) && " << first_output_name << ".a != alpha_ref) discard;\n";
-			break;
-		case rsx::comparison_function::not_equal:
-			OS << "	if (bool(alpha_test) && " << first_output_name << ".a == alpha_ref) discard;\n";
-			break;
-		case rsx::comparison_function::less_or_equal:
-			OS << "	if (bool(alpha_test) && " << first_output_name << ".a > alpha_ref) discard;\n";
-			break;
-		case rsx::comparison_function::less:
-			OS << "	if (bool(alpha_test) && " << first_output_name << ".a >= alpha_ref) discard;\n";
-			break;
-		case rsx::comparison_function::greater:
-			OS << "	if (bool(alpha_test) && " << first_output_name << ".a <= alpha_ref) discard;\n";
-			break;
-		case rsx::comparison_function::greater_or_equal:
-			OS << "	if (bool(alpha_test) && " << first_output_name << ".a < alpha_ref) discard;\n";
-			break;
 		}
 	}
 
@@ -361,8 +453,12 @@ void VKFragmentProgram::Decompile(const RSXFragmentProgram& prog)
 	{
 		for (const ParamItem& PI : PT.items)
 		{
-			if (PT.type == "sampler2D")
+			if (PT.type == "sampler1D" ||
+				PT.type == "sampler2D" ||
+				PT.type == "sampler3D" ||
+				PT.type == "samplerCube")
 				continue;
+
 			size_t offset = atoi(PI.name.c_str() + 2);
 			FragmentConstantOffsetCache.push_back(offset);
 		}
@@ -371,11 +467,12 @@ void VKFragmentProgram::Decompile(const RSXFragmentProgram& prog)
 
 void VKFragmentProgram::Compile()
 {
+	fs::create_path(fs::get_config_dir() + "/shaderlog");
 	fs::file(fs::get_config_dir() + "shaderlog/FragmentProgram.spirv", fs::rewrite).write(shader);
 
 	std::vector<u32> spir_v;
 	if (!vk::compile_glsl_to_spv(shader, vk::glsl::glsl_fragment_program, spir_v))
-		throw EXCEPTION("Failed to compile fragment shader");
+		fmt::throw_exception("Failed to compile fragment shader" HERE);
 
 	//Create the object and compile
 	VkShaderModuleCreateInfo fs_info;
@@ -397,16 +494,9 @@ void VKFragmentProgram::Delete()
 
 	if (handle)
 	{
-		if (Emu.IsStopped())
-		{
-			LOG_WARNING(RSX, "VKFragmentProgram::Delete(): vkDestroyShaderModule(0x%X) avoided", handle);
-		}
-		else
-		{
-			VkDevice dev = (VkDevice)*vk::get_current_renderer();
-			vkDestroyShaderModule(dev, handle, NULL);
-			handle = nullptr;
-		}
+		VkDevice dev = (VkDevice)*vk::get_current_renderer();
+		vkDestroyShaderModule(dev, handle, NULL);
+		handle = nullptr;
 	}
 }
 

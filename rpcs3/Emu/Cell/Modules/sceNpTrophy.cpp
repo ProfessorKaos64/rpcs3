@@ -136,7 +136,7 @@ s32 sceNpTrophyDestroyContext(u32 context)
 	return CELL_OK;
 }
 
-s32 sceNpTrophyRegisterContext(PPUThread& CPU, u32 context, u32 handle, vm::ptr<SceNpTrophyStatusCallback> statusCb, vm::ptr<u32> arg, u64 options)
+s32 sceNpTrophyRegisterContext(ppu_thread& CPU, u32 context, u32 handle, vm::ptr<SceNpTrophyStatusCallback> statusCb, vm::ptr<u32> arg, u64 options)
 {
 	sceNpTrophy.error("sceNpTrophyRegisterContext(context=0x%x, handle=0x%x, statusCb=*0x%x, arg=*0x%x, options=0x%llx)", context, handle, statusCb, arg, options);
 
@@ -269,7 +269,7 @@ s32 sceNpTrophyGetGameInfo(u32 context, u32 handle, vm::ptr<SceNpTrophyGameDetai
 	const std::string& path = vfs::get("/dev_hdd0/home/00000001/trophy/" + ctxt->trp_name + "/TROPCONF.SFM");
 	
 	// TODO: rXmlDocument can open only real file
-	VERIFY(!fs::get_virtual_device(path)); 
+	verify(HERE), !fs::get_virtual_device(path); 
 	rXmlDocument doc;
 	doc.Load(path);
 
@@ -399,7 +399,7 @@ s32 sceNpTrophyGetTrophyInfo(u32 context, u32 handle, s32 trophyId, vm::ptr<SceN
 	const std::string& path = vfs::get("/dev_hdd0/home/00000001/trophy/" + ctxt->trp_name + "/TROPCONF.SFM");
 
 	// TODO: rXmlDocument can open only real file
-	VERIFY(!fs::get_virtual_device(path));
+	verify(HERE), !fs::get_virtual_device(path);
 	rXmlDocument doc; 
 	doc.Load(path);
 

@@ -23,7 +23,6 @@
 
 #include "../Utilities/types.h"
 #include "../Utilities/StrFmt.h"
-#include "../Utilities/Macro.h"
 #include "../Utilities/BEType.h"
 
 template<typename T, typename = void>
@@ -149,11 +148,9 @@ class PPUTranslator final //: public CPUTranslator
 
 	/* Variables */
 
-	// Explicit register usage counter
-	std::unordered_map<llvm::Value*, u64> m_value_usage;
-
 	// Memory base
 	llvm::Value* m_base;
+	llvm::Value* m_base_loaded;
 
 	// Thread context
 	llvm::Value* m_thread;
@@ -240,16 +237,16 @@ public:
 	// Get the basic block for the specified address
 	llvm::BasicBlock* GetBasicBlock(u64 addr);
 
-	// Load GPR
+	// Load gpr
 	llvm::Value* GetGpr(u32 r, u32 num_bits = 64);
 
-	// Set GPR
+	// Set gpr
 	void SetGpr(u32 r, llvm::Value* value);
 
-	// Get FPR
+	// Get fpr
 	llvm::Value* GetFpr(u32 r, u32 bits = 64, bool as_int = false);
 
-	// Set FPR
+	// Set fpr
 	void SetFpr(u32 r, llvm::Value* val);
 
 	// Vector register type
@@ -262,7 +259,7 @@ public:
 		i128, // Solid 128-bit integer
 	};
 
-	// Load VR
+	// Load vr
 	llvm::Value* GetVr(u32 vr, VrType);
 
 	// Load VRs
@@ -273,7 +270,7 @@ public:
 		return{ GetVr(regs, type)... };
 	}
 
-	// Set VR to the specified value
+	// Set vr to the specified value
 	void SetVr(u32 vr, llvm::Value*);
 
 	// Bitcast to scalar integer value
@@ -386,9 +383,6 @@ public:
 	// Branch to next instruction if condition failed, never branch on nullptr
 	void UseCondition(llvm::Value* = nullptr);
 
-	// Check whether the address is stack
-	bool IsStackAddr(llvm::Value* addr);
-
 	// Get memory pointer
 	llvm::Value* GetMemory(llvm::Value* addr, llvm::Type* type);
 
@@ -436,7 +430,7 @@ public:
 	// Handle compilation errors
 	void CompilationError(const std::string& error);
 
-	PPUTranslator(llvm::LLVMContext& context, llvm::Module* module, u64 base, u64 entry);
+	PPUTranslator(llvm::LLVMContext& context, llvm::Module* module, u64 base);
 	~PPUTranslator();
 
 	// Get thread context struct type

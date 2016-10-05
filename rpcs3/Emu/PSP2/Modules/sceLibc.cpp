@@ -141,7 +141,7 @@ std::string arm_fmt(ARMv7Thread& cpu, vm::cptr<char> fmt, u32 g_count)
 			}
 			}
 
-			throw EXCEPTION("Unknown formatting '%s'", start.get_ptr());
+			fmt::throw_exception("Unknown formatting '%s'" HERE, start.get_ptr());
 		}
 		}
 
@@ -201,25 +201,20 @@ namespace sce_libc_func
 
 	void printf(ARMv7Thread& cpu, vm::cptr<char> fmt, arm_va_args_t va_args)
 	{
-		sceLibc.warning("printf(fmt=*0x%x)", fmt);
-		sceLibc.trace("*** *fmt = '%s'", fmt.get_ptr());
-
-		const std::string& result = arm_fmt(cpu, fmt, va_args.count);
-		sceLibc.trace("***     -> '%s'", result);
+		sceLibc.warning("printf(fmt=%s, ...)", fmt);
 
 		if (g_tty)
 		{
-			g_tty.write(result);
+			g_tty.write(arm_fmt(cpu, fmt, va_args.count));
 		}
 	}
 
 	void sprintf(ARMv7Thread& cpu, vm::ptr<char> str, vm::cptr<char> fmt, arm_va_args_t va_args)
 	{
-		sceLibc.warning("sprintf(str=*0x%x, fmt=*0x%x)", str, fmt);
-		sceLibc.trace("*** *fmt = '%s'", fmt.get_ptr());
+		sceLibc.warning("sprintf(str=*0x%x, fmt=%s, ...)", str, fmt);
 
 		const std::string& result = arm_fmt(cpu, fmt, va_args.count);
-		sceLibc.trace("***     -> '%s'", result);
+		sceLibc.trace("sprintf() -> '%s'", result);
 
 		::memcpy(str.get_ptr(), result.c_str(), result.size() + 1);
 	}

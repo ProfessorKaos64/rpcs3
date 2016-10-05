@@ -59,19 +59,18 @@ s32 sys_spu_image_close(vm::ptr<sys_spu_image_t> img)
 		return CELL_EINVAL;
 	}
 
-	VERIFY(vm::dealloc(img->segs.addr(), vm::main)); // Current rough implementation
+	verify(HERE), vm::dealloc(img->segs.addr(), vm::main); // Current rough implementation
 	return CELL_OK;
 }
 
 s32 sys_raw_spu_load(s32 id, vm::cptr<char> path, vm::ptr<u32> entry)
 {
-	sysPrxForUser.warning("sys_raw_spu_load(id=%d, path=*0x%x, entry=*0x%x)", id, path, entry);
-	sysPrxForUser.warning("*** path = '%s'", path.get_ptr());
+	sysPrxForUser.warning("sys_raw_spu_load(id=%d, path=%s, entry=*0x%x)", id, path, entry);
 
 	const fs::file f(vfs::get(path.get_ptr()));
 	if (!f)
 	{
-		sysPrxForUser.error("sys_raw_spu_load() error: '%s' not found!", path.get_ptr());
+		sysPrxForUser.error("sys_raw_spu_load() error: %s not found!", path);
 		return CELL_ENOENT;
 	}
 
@@ -80,7 +79,7 @@ s32 sys_raw_spu_load(s32 id, vm::cptr<char> path, vm::ptr<u32> entry)
 
 	if (hdr.CheckMagic())
 	{
-		throw fmt::exception("sys_raw_spu_load() error: '%s' is encrypted! Try to decrypt it manually and try again.", path.get_ptr());
+		fmt::throw_exception("sys_raw_spu_load() error: %s is encrypted! Try to decrypt it manually and try again.", path);
 	}
 
 	f.seek(0);
@@ -93,7 +92,7 @@ s32 sys_raw_spu_load(s32 id, vm::cptr<char> path, vm::ptr<u32> entry)
 	return CELL_OK;
 }
 
-s32 sys_raw_spu_image_load(PPUThread& ppu, s32 id, vm::ptr<sys_spu_image_t> img)
+s32 sys_raw_spu_image_load(ppu_thread& ppu, s32 id, vm::ptr<sys_spu_image_t> img)
 {
 	sysPrxForUser.warning("sys_raw_spu_image_load(id=%d, img=*0x%x)", id, img);
 
@@ -140,7 +139,7 @@ s32 _sys_spu_printf_finalize()
 	return CELL_OK;
 }
 
-s32 _sys_spu_printf_attach_group(PPUThread& ppu, u32 group)
+s32 _sys_spu_printf_attach_group(ppu_thread& ppu, u32 group)
 {
 	sysPrxForUser.warning("_sys_spu_printf_attach_group(group=0x%x)", group);
 
@@ -152,7 +151,7 @@ s32 _sys_spu_printf_attach_group(PPUThread& ppu, u32 group)
 	return g_spu_printf_agcb(ppu, group);
 }
 
-s32 _sys_spu_printf_detach_group(PPUThread& ppu, u32 group)
+s32 _sys_spu_printf_detach_group(ppu_thread& ppu, u32 group)
 {
 	sysPrxForUser.warning("_sys_spu_printf_detach_group(group=0x%x)", group);
 
@@ -164,7 +163,7 @@ s32 _sys_spu_printf_detach_group(PPUThread& ppu, u32 group)
 	return g_spu_printf_dgcb(ppu, group);
 }
 
-s32 _sys_spu_printf_attach_thread(PPUThread& ppu, u32 thread)
+s32 _sys_spu_printf_attach_thread(ppu_thread& ppu, u32 thread)
 {
 	sysPrxForUser.warning("_sys_spu_printf_attach_thread(thread=0x%x)", thread);
 
@@ -176,7 +175,7 @@ s32 _sys_spu_printf_attach_thread(PPUThread& ppu, u32 thread)
 	return g_spu_printf_atcb(ppu, thread);
 }
 
-s32 _sys_spu_printf_detach_thread(PPUThread& ppu, u32 thread)
+s32 _sys_spu_printf_detach_thread(ppu_thread& ppu, u32 thread)
 {
 	sysPrxForUser.warning("_sys_spu_printf_detach_thread(thread=0x%x)", thread);
 

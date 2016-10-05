@@ -1,6 +1,8 @@
 #pragma once
 
 #include <map>
+#include <functional>
+#include <memory>
 
 class thread_ctrl;
 
@@ -146,7 +148,7 @@ namespace vm
 			return static_cast<vm::addr_t>(res);
 		}
 
-		throw fmt::exception("Not a virtual memory pointer (%p)", real_ptr);
+		fmt::throw_exception("Not a virtual memory pointer (%p)", real_ptr);
 	}
 
 	// Convert pointer-to-member to a vm address compatible offset
@@ -180,12 +182,12 @@ namespace vm
 	{
 		static vm::addr_t cast(u64 addr, const char* loc)
 		{
-			return static_cast<vm::addr_t>(fmt::narrow<u32>("Memory address out of range: 0x%llx%s", addr, loc));
+			return static_cast<vm::addr_t>(static_cast<u32>(addr));
 		}
 
 		static vm::addr_t cast(u64 addr)
 		{
-			return static_cast<vm::addr_t>(fmt::narrow<u32>("Memory address out of range: 0x%llx", addr));
+			return static_cast<vm::addr_t>(static_cast<u32>(addr));
 		}
 	};
 
@@ -357,9 +359,6 @@ namespace vm
 	}
 
 	void close();
-
-	u32 stack_push(u32 size, u32 align_v);
-	void stack_pop_verbose(u32 addr, u32 size) noexcept;
 
 	extern thread_local u64 g_tls_fault_count;
 }

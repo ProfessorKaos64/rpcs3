@@ -14,14 +14,14 @@
 
 namespace gl
 {
-#if 1//def _DEBUG
+#ifdef _DEBUG
 	struct __glcheck_impl_t
 	{
 		const char* file;
 		const char* function;
-		long line;
+		int line;
 
-		constexpr __glcheck_impl_t(const char* file, const char* function, long line)
+		constexpr __glcheck_impl_t(const char* file, const char* function, int line)
 			: file(file)
 			, function(function)
 			, line(line)
@@ -43,7 +43,7 @@ namespace gl
 				default: error = "unknown error"; break;
 				}
 
-				throw std::runtime_error(fmt::format("OpenGL error: %s. file '%s' function '%s' line %ld", error.c_str(), file, function, line));
+				fmt::throw_exception("OpenGL error: %s\n(in file %s:%d, function %s)", error, file, line, function);
 			}
 		}
 	};
@@ -653,14 +653,14 @@ namespace gl
 				reserve_and_map((size > 4096) ? size : 4096);
 			}
 
-			EXPECTS(m_mapped_bytes_available >= size);
+			verify(HERE), m_mapped_bytes_available >= size;
 
 			void *ptr = (char*)m_mapped_base + m_mapped_reserve_offset;
 			u32 offset = m_mapped_reserve_offset + m_mapped_block_offset;
 			m_mapped_reserve_offset += size;
 			m_mapped_bytes_available -= size;
 
-			EXPECTS((offset & (alignment - 1)) == 0);
+			verify(HERE), (offset & (alignment - 1)) == 0;
 			return std::make_pair(ptr, offset);
 		}
 
@@ -1239,7 +1239,7 @@ namespace gl
 		void copy_from(buffer &buf, u32 gl_format_type, u32 offset, u32 length)
 		{
 			if (get_target() != target::textureBuffer)
-				throw EXCEPTION("OpenGL error: texture cannot copy from buffer");
+				fmt::throw_exception("OpenGL error: texture cannot copy from buffer" HERE);
 
 /*			if (!offset)
 			{
@@ -1248,7 +1248,7 @@ namespace gl
 			}*/
 
 			if (glTextureBufferRangeEXT == nullptr)
-				throw EXCEPTION("OpenGL error: partial buffer access for textures is unsupported on your system");
+				fmt::throw_exception("OpenGL error: partial buffer access for textures is unsupported on your system" HERE);
 
 			__glcheck glTextureBufferRangeEXT(id(), (GLenum)target::textureBuffer, gl_format_type, buf.id(), offset, length);
 		}
@@ -1803,6 +1803,7 @@ namespace gl
 						break;
 					}
 
+					fs::create_path(fs::get_config_dir() + "/shaderlog");
 					fs::file(fs::get_config_dir() + base_name + std::to_string(m_id) + ".glsl", fs::rewrite).write(str);
 				}
 

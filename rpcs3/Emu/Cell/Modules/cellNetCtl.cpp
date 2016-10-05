@@ -101,8 +101,8 @@ s32 cellNetCtlNetStartDialogLoadAsync(vm::ptr<CellNetCtlNetStartDialogParam> par
 
 	// TODO: Actually sign into PSN or an emulated network similar to PSN (ESN)
 	// TODO: Properly open the dialog prompt for sign in
-	sysutilSendSystemCommand(CELL_SYSUTIL_NET_CTL_NETSTART_LOADED, 0);
-	sysutilSendSystemCommand(CELL_SYSUTIL_NET_CTL_NETSTART_FINISHED, 0);
+	sysutil_send_system_cmd(CELL_SYSUTIL_NET_CTL_NETSTART_LOADED, 0);
+	sysutil_send_system_cmd(CELL_SYSUTIL_NET_CTL_NETSTART_FINISHED, 0);
 
 	return CELL_OK;
 }
@@ -119,7 +119,7 @@ s32 cellNetCtlNetStartDialogUnloadAsync(vm::ptr<CellNetCtlNetStartDialogResult> 
 	cellNetCtl.warning("cellNetCtlNetStartDialogUnloadAsync(result=*0x%x)", result);
 
 	result->result = CELL_NET_CTL_ERROR_DIALOG_CANCELED;
-	sysutilSendSystemCommand(CELL_SYSUTIL_NET_CTL_NETSTART_UNLOADED, 0);
+	sysutil_send_system_cmd(CELL_SYSUTIL_NET_CTL_NETSTART_UNLOADED, 0);
 
 	return CELL_OK;
 }
@@ -139,48 +139,48 @@ s32 cellNetCtlGetNatInfo(vm::ptr<CellNetCtlNatInfo> natInfo)
 
 s32 cellGameUpdateInit()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGameUpdateTerm()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 
 s32 cellGameUpdateCheckStartAsync()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGameUpdateCheckFinishAsync()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGameUpdateCheckStartWithoutDialogAsync()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGameUpdateCheckAbort()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGameUpdateCheckStartAsyncEx()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGameUpdateCheckFinishAsyncEx()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellGameUpdateCheckStartWithoutDialogAsyncEx()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 

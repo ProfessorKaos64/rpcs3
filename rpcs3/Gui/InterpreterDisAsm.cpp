@@ -23,11 +23,10 @@ std::map<u32, bool> g_breakpoints;
 
 u32 InterpreterDisAsmFrame::GetPc() const
 {
-	switch (cpu->type)
+	switch (g_system)
 	{
-	case cpu_type::ppu: return static_cast<PPUThread*>(cpu)->pc;
-	case cpu_type::spu: return static_cast<SPUThread*>(cpu)->pc;
-	case cpu_type::arm: return static_cast<ARMv7Thread*>(cpu)->PC;
+	case system_type::ps3: return cpu->id >= ppu_thread::id_min ? static_cast<ppu_thread*>(cpu)->cia : static_cast<SPUThread*>(cpu)->pc;
+	case system_type::psv: return static_cast<ARMv7Thread*>(cpu)->PC;
 	}
 	
 	return 0xabadcafe;
@@ -123,7 +122,7 @@ void InterpreterDisAsmFrame::UpdateUnitList()
 	m_choice_units->Freeze();
 	m_choice_units->Clear();
 
-	idm::select<PPUThread, SPUThread, RawSPUThread, ARMv7Thread>([&](u32, cpu_thread& cpu)
+	idm::select<ppu_thread, SPUThread, RawSPUThread, ARMv7Thread>([&](u32, cpu_thread& cpu)
 	{
 		m_choice_units->Append(cpu.get_name(), &cpu);
 	});
@@ -137,21 +136,23 @@ void InterpreterDisAsmFrame::OnSelectUnit(wxCommandEvent& event)
 
 	if (cpu = (cpu_thread*)event.GetClientData())
 	{
-		switch (cpu->type)
+		switch (g_system)
 		{
-		case cpu_type::ppu:
+		case system_type::ps3:
 		{
-			m_disasm = std::make_unique<PPUDisAsm>(CPUDisAsm_InterpreterMode);
+			if (cpu->id >= ppu_thread::id_min)
+			{
+				m_disasm = std::make_unique<PPUDisAsm>(CPUDisAsm_InterpreterMode);
+			}
+			else
+			{
+				m_disasm = std::make_unique<SPUDisAsm>(CPUDisAsm_InterpreterMode);
+			}
+
 			break;
 		}
 
-		case cpu_type::spu:
-		{
-			m_disasm = std::make_unique<SPUDisAsm>(CPUDisAsm_InterpreterMode);
-			break;
-		}
-
-		case cpu_type::arm:
+		case system_type::psv:
 		{
 			m_disasm = std::make_unique<ARMv7DisAsm>(CPUDisAsm_InterpreterMode);
 			break;
@@ -249,7 +250,7 @@ void InterpreterDisAsmFrame::ShowAddr(u32 addr)
 	}
 	else
 	{
-		const u32 cpu_offset = cpu->type == cpu_type::spu ? static_cast<SPUThread&>(*cpu).offset : 0;
+		const u32 cpu_offset = g_system == system_type::ps3 && cpu->id < ppu_thread::id_min ? static_cast<SPUThread&>(*cpu).offset : 0;
 		m_disasm->offset = (u8*)vm::base(cpu_offset);
 		for (uint i = 0, count = 4; i<m_item_count; ++i, m_pc += count)
 		{
@@ -266,7 +267,7 @@ void InterpreterDisAsmFrame::ShowAddr(u32 addr)
 
 			wxColour colour;
 
-			if (cpu->state.test(cpu_state_pause) && m_pc == GetPc())
+			if (test(cpu->state & cpu_state_pause) && m_pc == GetPc())
 			{
 				colour = wxColour("Green");
 			}
@@ -436,9 +437,9 @@ void InterpreterDisAsmFrame::Show_PC(wxCommandEvent& WXUNUSED(event))
 
 void InterpreterDisAsmFrame::DoRun(wxCommandEvent& WXUNUSED(event))
 {
-	if (cpu && cpu->state.test(cpu_state_pause))
+	if (cpu && test(cpu->state & cpu_state_pause))
 	{
-		cpu->state -= cpu_state::dbg_pause;
+		cpu->state -= cpu_flag::dbg_pause;
 		(*cpu)->lock_notify();
 	}
 }
@@ -447,7 +448,7 @@ void InterpreterDisAsmFrame::DoPause(wxCommandEvent& WXUNUSED(event))
 {
 	if (cpu)
 	{
-		cpu->state += cpu_state::dbg_pause;
+		cpu->state += cpu_flag::dbg_pause;
 	}
 }
 
@@ -455,11 +456,11 @@ void InterpreterDisAsmFrame::DoStep(wxCommandEvent& WXUNUSED(event))
 {
 	if (cpu)
 	{
-		if (cpu->state.atomic_op([](bitset_t<cpu_state>& state) -> bool
+		if (test(cpu_flag::dbg_pause, cpu->state.fetch_op([](bs_t<cpu_flag>& state)
 		{
-			state += cpu_state::dbg_step;
-			return state.test_and_reset(cpu_state::dbg_pause);
-		}))
+			state += cpu_flag::dbg_step;
+			state -= cpu_flag::dbg_pause;
+		})))
 		{
 			(*cpu)->lock_notify();
 		}

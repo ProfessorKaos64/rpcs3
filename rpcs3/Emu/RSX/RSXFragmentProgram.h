@@ -221,6 +221,7 @@ struct RSXFragmentProgram
 	u32 offset;
 	u32 ctrl;
 	u16 unnormalized_coords;
+	u16 redirected_textures;
 	rsx::comparison_function alpha_func;
 	bool front_back_color_enabled : 1;
 	bool back_color_diffuse_output : 1;
@@ -232,6 +233,9 @@ struct RSXFragmentProgram
 	rsx::window_pixel_center pixel_center_mode;
 	rsx::fog_mode fog_equation;
 	u16 height;
+
+	u8 textures_alpha_kill[16];
+	u32 textures_zfunc[16];
 
 	rsx::texture_dimension_extended get_texture_dimension(u8 id) const
 	{

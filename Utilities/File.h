@@ -1,17 +1,16 @@
 #pragma once
 
+#include "types.h"
+#include "bit_set.h"
+
 #include <memory>
 #include <string>
 #include <vector>
-#include <type_traits>
-
-#include "types.h"
-#include "BitSet.h"
 
 namespace fs
 {
 	// File open mode flags
-	enum struct open_mode : u32
+	enum class open_mode : u32
 	{
 		read,
 		write,
@@ -19,16 +18,18 @@ namespace fs
 		create,
 		trunc,
 		excl,
+
+		__bitset_enum_max
 	};
 
-	constexpr bitset_t<open_mode> read    = open_mode::read; // Enable reading
-	constexpr bitset_t<open_mode> write   = open_mode::write; // Enable writing
-	constexpr bitset_t<open_mode> append  = open_mode::append; // Always append to the end of the file
-	constexpr bitset_t<open_mode> create  = open_mode::create; // Create file if it doesn't exist
-	constexpr bitset_t<open_mode> trunc   = open_mode::trunc; // Clear opened file if it's not empty
-	constexpr bitset_t<open_mode> excl    = open_mode::excl; // Failure if the file already exists (used with `create`)
+	constexpr auto read    = +open_mode::read; // Enable reading
+	constexpr auto write   = +open_mode::write; // Enable writing
+	constexpr auto append  = +open_mode::append; // Always append to the end of the file
+	constexpr auto create  = +open_mode::create; // Create file if it doesn't exist
+	constexpr auto trunc   = +open_mode::trunc; // Clear opened file if it's not empty
+	constexpr auto excl    = +open_mode::excl; // Failure if the file already exists (used with `create`)
 
-	constexpr bitset_t<open_mode> rewrite = write + create + trunc;
+	constexpr auto rewrite = open_mode::write + open_mode::create + open_mode::trunc;
 
 	// File seek mode
 	enum class seek_mode : u32
@@ -93,7 +94,7 @@ namespace fs
 		virtual bool remove(const std::string& path) = 0;
 		virtual bool trunc(const std::string& path, u64 length) = 0;
 
-		virtual std::unique_ptr<file_base> open(const std::string& path, bitset_t<open_mode> mode) = 0;
+		virtual std::unique_ptr<file_base> open(const std::string& path, bs_t<open_mode> mode) = 0;
 		virtual std::unique_ptr<dir_base> open_dir(const std::string& path) = 0;
 	};
 
@@ -151,13 +152,13 @@ namespace fs
 		file() = default;
 
 		// Open file with specified mode
-		explicit file(const std::string& path, bitset_t<open_mode> mode = ::fs::read)
+		explicit file(const std::string& path, bs_t<open_mode> mode = ::fs::read)
 		{
 			open(path, mode);
 		}
 
 		// Open file with specified mode
-		bool open(const std::string& path, bitset_t<open_mode> mode = ::fs::read);
+		bool open(const std::string& path, bs_t<open_mode> mode = ::fs::read);
 
 		// Open memory for read
 		explicit file(const void* ptr, std::size_t size);
@@ -463,21 +464,3 @@ namespace fs
 	// Error code returned
 	extern thread_local error g_tls_error;
 }
-
-template<>
-struct unveil<fs::error>
-{
-	static inline const char* get(fs::error error)
-	{
-		switch (error)
-		{
-		case fs::error::ok: return "OK";
-
-		case fs::error::inval: return "Invalid arguments";
-		case fs::error::noent: return "Not found";
-		case fs::error::exist: return "Already exists";
-
-		default: throw error;
-		}
-	}
-};

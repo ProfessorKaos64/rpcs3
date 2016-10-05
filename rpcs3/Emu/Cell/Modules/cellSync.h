@@ -5,193 +5,164 @@
 namespace vm { using namespace ps3; }
 
 // Return Codes
-enum CellSyncError : s32
+enum CellSyncError : u32
 {
-	CELL_SYNC_ERROR_AGAIN                  = ERROR_CODE(0x80410101),
-	CELL_SYNC_ERROR_INVAL                  = ERROR_CODE(0x80410102),
-	CELL_SYNC_ERROR_NOSYS                  = ERROR_CODE(0x80410103),
-	CELL_SYNC_ERROR_NOMEM                  = ERROR_CODE(0x80410104),
-	CELL_SYNC_ERROR_SRCH                   = ERROR_CODE(0x80410105),
-	CELL_SYNC_ERROR_NOENT                  = ERROR_CODE(0x80410106),
-	CELL_SYNC_ERROR_NOEXEC                 = ERROR_CODE(0x80410107),
-	CELL_SYNC_ERROR_DEADLK                 = ERROR_CODE(0x80410108),
-	CELL_SYNC_ERROR_PERM                   = ERROR_CODE(0x80410109),
-	CELL_SYNC_ERROR_BUSY                   = ERROR_CODE(0x8041010A),
-	CELL_SYNC_ERROR_ABORT                  = ERROR_CODE(0x8041010C),
-	CELL_SYNC_ERROR_FAULT                  = ERROR_CODE(0x8041010D),
-	CELL_SYNC_ERROR_CHILD                  = ERROR_CODE(0x8041010E),
-	CELL_SYNC_ERROR_STAT                   = ERROR_CODE(0x8041010F),
-	CELL_SYNC_ERROR_ALIGN                  = ERROR_CODE(0x80410110),
-	CELL_SYNC_ERROR_NULL_POINTER           = ERROR_CODE(0x80410111),
-	CELL_SYNC_ERROR_NOT_SUPPORTED_THREAD   = ERROR_CODE(0x80410112),
-	CELL_SYNC_ERROR_NO_NOTIFIER            = ERROR_CODE(0x80410113),
-	CELL_SYNC_ERROR_NO_SPU_CONTEXT_STORAGE = ERROR_CODE(0x80410114),
+	CELL_SYNC_ERROR_AGAIN                  = 0x80410101,
+	CELL_SYNC_ERROR_INVAL                  = 0x80410102,
+	CELL_SYNC_ERROR_NOSYS                  = 0x80410103,
+	CELL_SYNC_ERROR_NOMEM                  = 0x80410104,
+	CELL_SYNC_ERROR_SRCH                   = 0x80410105,
+	CELL_SYNC_ERROR_NOENT                  = 0x80410106,
+	CELL_SYNC_ERROR_NOEXEC                 = 0x80410107,
+	CELL_SYNC_ERROR_DEADLK                 = 0x80410108,
+	CELL_SYNC_ERROR_PERM                   = 0x80410109,
+	CELL_SYNC_ERROR_BUSY                   = 0x8041010A,
+	CELL_SYNC_ERROR_ABORT                  = 0x8041010C,
+	CELL_SYNC_ERROR_FAULT                  = 0x8041010D,
+	CELL_SYNC_ERROR_CHILD                  = 0x8041010E,
+	CELL_SYNC_ERROR_STAT                   = 0x8041010F,
+	CELL_SYNC_ERROR_ALIGN                  = 0x80410110,
+	CELL_SYNC_ERROR_NULL_POINTER           = 0x80410111,
+	CELL_SYNC_ERROR_NOT_SUPPORTED_THREAD   = 0x80410112,
+	CELL_SYNC_ERROR_NO_NOTIFIER            = 0x80410113,
+	CELL_SYNC_ERROR_NO_SPU_CONTEXT_STORAGE = 0x80410114,
 };
 
-enum CellSyncError1 : s32
+enum CellSyncError1 : u32
 {
-	CELL_SYNC_ERROR_SHOTAGE                = ERROR_CODE(0x80410112),
-	CELL_SYNC_ERROR_UNKNOWNKEY             = ERROR_CODE(0x80410113),
+	CELL_SYNC_ERROR_SHOTAGE                = 0x80410112,
+	CELL_SYNC_ERROR_UNKNOWNKEY             = 0x80410113,
 };
 
-template<>
-inline const char* ppu_error_code::print(CellSyncError error)
+struct CellSyncMutex
 {
-	switch (error)
-	{
-		STR_CASE(CELL_SYNC_ERROR_AGAIN);
-		STR_CASE(CELL_SYNC_ERROR_INVAL);
-		STR_CASE(CELL_SYNC_ERROR_NOSYS);
-		STR_CASE(CELL_SYNC_ERROR_NOMEM);
-		STR_CASE(CELL_SYNC_ERROR_SRCH);
-		STR_CASE(CELL_SYNC_ERROR_NOENT);
-		STR_CASE(CELL_SYNC_ERROR_NOEXEC);
-		STR_CASE(CELL_SYNC_ERROR_DEADLK);
-		STR_CASE(CELL_SYNC_ERROR_PERM);
-		STR_CASE(CELL_SYNC_ERROR_BUSY);
-		STR_CASE(CELL_SYNC_ERROR_ABORT);
-		STR_CASE(CELL_SYNC_ERROR_FAULT);
-		STR_CASE(CELL_SYNC_ERROR_CHILD);
-		STR_CASE(CELL_SYNC_ERROR_STAT);
-		STR_CASE(CELL_SYNC_ERROR_ALIGN);
-		STR_CASE(CELL_SYNC_ERROR_NULL_POINTER);
-		STR_CASE(CELL_SYNC_ERROR_NOT_SUPPORTED_THREAD);
-		STR_CASE(CELL_SYNC_ERROR_NO_NOTIFIER);
-		STR_CASE(CELL_SYNC_ERROR_NO_SPU_CONTEXT_STORAGE);
-	}
-
-	return nullptr;
-}
-
-template<>
-inline const char* ppu_error_code::print(CellSyncError1 error)
-{
-	switch (error)
-	{
-		STR_CASE(CELL_SYNC_ERROR_SHOTAGE);
-		STR_CASE(CELL_SYNC_ERROR_UNKNOWNKEY);
-	}
-
-	return nullptr;
-}
-
-namespace _sync
-{
-	struct alignas(4) mutex // CellSyncMutex control variable
+	struct alignas(4) ctrl_t
 	{
 		be_t<u16> rel;
 		be_t<u16> acq;
 	};
-}
 
-struct CellSyncMutex
-{
-	atomic_t<_sync::mutex> ctrl;
+	atomic_t<ctrl_t> ctrl;
+
+	static inline auto lock_begin(ctrl_t& ctrl)
+	{
+		return ctrl.acq++;
+	}
+
+	static inline bool try_lock(ctrl_t& ctrl)
+	{
+		if (UNLIKELY(ctrl.rel != ctrl.acq))
+		{
+			return false;
+		}
+
+		ctrl.acq++;
+		return true;
+	}
+
+	static inline void unlock(ctrl_t& ctrl)
+	{
+		ctrl.rel++;
+	}
 };
 
 CHECK_SIZE_ALIGN(CellSyncMutex, 4, 4);
 
-namespace _sync
+struct CellSyncBarrier
 {
-	struct alignas(4) barrier // CellSyncBarrier control variable
+	struct alignas(4) ctrl_t
 	{
 		be_t<s16> value;
 		be_t<u16> count;
-
-		static inline bool try_notify(barrier& ctrl)
-		{
-			if (ctrl.value & 0x8000)
-			{
-				return false;
-			}
-
-			if (++ctrl.value == ctrl.count)
-			{
-				ctrl.value |= 0x8000;
-			}
-
-			return true;
-		};
-
-		static inline bool try_wait(barrier& ctrl)
-		{
-			if ((ctrl.value & 0x8000) == 0)
-			{
-				return false;
-			}
-
-			if (--ctrl.value == -0x8000)
-			{
-				ctrl.value = 0;
-			}
-
-			return true;
-		}
 	};
-}
 
-struct CellSyncBarrier
-{
-	atomic_t<_sync::barrier> ctrl;
+	atomic_t<ctrl_t> ctrl;
+
+	static inline bool try_notify(ctrl_t& ctrl)
+	{
+		if (ctrl.value & 0x8000)
+		{
+			return false;
+		}
+
+		if (++ctrl.value == ctrl.count)
+		{
+			ctrl.value |= 0x8000;
+		}
+
+		return true;
+	};
+
+	static inline bool try_wait(ctrl_t& ctrl)
+	{
+		if ((ctrl.value & 0x8000) == 0)
+		{
+			return false;
+		}
+
+		if (--ctrl.value == -0x8000)
+		{
+			ctrl.value = 0;
+		}
+
+		return true;
+	}
 };
 
 CHECK_SIZE_ALIGN(CellSyncBarrier, 4, 4);
 
-namespace _sync
+struct alignas(16) CellSyncRwm
 {
-	struct alignas(4) rwlock // CellSyncRwm control variable
+	struct alignas(4) ctrl_t
 	{
 		be_t<u16> readers;
 		be_t<u16> writers;
-
-		static inline bool try_read_begin(rwlock& ctrl)
-		{
-			if (ctrl.writers)
-			{
-				return false;
-			}
-
-			ctrl.readers++;
-			return true;
-		}
-
-		static inline bool try_read_end(rwlock& ctrl)
-		{
-			if (ctrl.readers == 0)
-			{
-				return false;
-			}
-
-			ctrl.readers--;
-			return true;
-		}
-
-		static inline bool try_write_begin(rwlock& ctrl)
-		{
-			if (ctrl.writers)
-			{
-				return false;
-			}
-
-			ctrl.writers = 1;
-			return true;
-		}
 	};
-}
 
-struct alignas(16) CellSyncRwm
-{
-	atomic_t<_sync::rwlock> ctrl;
+	atomic_t<ctrl_t> ctrl;
 
 	be_t<u32> size;
 	vm::bptr<void, u64> buffer;
+
+	static inline bool try_read_begin(ctrl_t& ctrl)
+	{
+		if (ctrl.writers)
+		{
+			return false;
+		}
+
+		ctrl.readers++;
+		return true;
+	}
+
+	static inline bool try_read_end(ctrl_t& ctrl)
+	{
+		if (ctrl.readers == 0)
+		{
+			return false;
+		}
+
+		ctrl.readers--;
+		return true;
+	}
+
+	static inline bool try_write_begin(ctrl_t& ctrl)
+	{
+		if (ctrl.writers)
+		{
+			return false;
+		}
+
+		ctrl.writers = 1;
+		return true;
+	}
 };
 
 CHECK_SIZE_ALIGN(CellSyncRwm, 16, 16);
 
-namespace _sync
+struct alignas(32) CellSyncQueue
 {
-	struct alignas(8) queue // CellSyncQueue control variable
+	struct alignas(8) ctrl_t
 	{
 		union
 		{
@@ -208,79 +179,9 @@ namespace _sync
 			bf_t<be_t<u32>, 0, 24> count;
 			bf_t<be_t<u32>, 24, 8> _push;
 		};
-
-		static inline bool try_push_begin(queue& ctrl, u32 depth, u32* position)
-		{
-			const u32 count = ctrl.count;
-
-			if (ctrl._push || count + ctrl._pop >= depth)
-			{
-				return false;
-			}
-
-			*position = ctrl.next;
-			ctrl.next = *position + 1 != depth ? *position + 1 : 0;
-			ctrl.count = count + 1;
-			ctrl._push = 1;
-			return true;
-		}
-
-		static inline bool try_pop_begin(queue& ctrl, u32 depth, u32* position)
-		{
-			const u32 count = ctrl.count;
-
-			if (ctrl._pop || count <= ctrl._push)
-			{
-				return false;
-			}
-
-			ctrl._pop = 1;
-			*position = ctrl.next + depth - count;
-			ctrl.count = count - 1;
-			return true;
-		}
-
-		static inline bool try_peek_begin(queue& ctrl, u32 depth, u32* position)
-		{
-			const u32 count = ctrl.count;
-
-			if (ctrl._pop || count <= ctrl._push)
-			{
-				return false;
-			}
-
-			ctrl._pop = 1;
-			*position = ctrl.next + depth - count;
-			return true;
-		}
-
-		static inline bool try_clear_begin_1(queue& ctrl)
-		{
-			if (ctrl._pop)
-			{
-				return false;
-			}
-
-			ctrl._pop = 1;
-			return true;
-		}
-
-		static inline bool try_clear_begin_2(queue& ctrl)
-		{
-			if (ctrl._push)
-			{
-				return false;
-			}
-
-			ctrl._push = 1;
-			return true;
-		}
 	};
-}
 
-struct alignas(32) CellSyncQueue
-{
-	atomic_t<_sync::queue> ctrl;
+	atomic_t<ctrl_t> ctrl;
 
 	be_t<u32> size;
 	be_t<u32> depth;
@@ -293,10 +194,87 @@ struct alignas(32) CellSyncQueue
 
 		if (data.next > depth || data.count > depth)
 		{
-			throw EXCEPTION("Invalid queue pointers");
+			fmt::throw_exception("Invalid queue pointers" HERE);
 		}
 
 		return depth;
+	}
+
+	static inline bool try_push_begin(ctrl_t& ctrl, u32 depth, u32* position)
+	{
+		const u32 count = ctrl.count;
+
+		if (ctrl._push || count + ctrl._pop >= depth)
+		{
+			return false;
+		}
+
+		*position = ctrl.next;
+		ctrl.next = *position + 1 != depth ? *position + 1 : 0;
+		ctrl.count = count + 1;
+		ctrl._push = 1;
+		return true;
+	}
+
+	static inline void push_end(ctrl_t& ctrl)
+	{
+		ctrl._push = 0;
+	}
+
+	static inline bool try_pop_begin(ctrl_t& ctrl, u32 depth, u32* position)
+	{
+		const u32 count = ctrl.count;
+
+		if (ctrl._pop || count <= ctrl._push)
+		{
+			return false;
+		}
+
+		ctrl._pop = 1;
+		*position = ctrl.next + depth - count;
+		ctrl.count = count - 1;
+		return true;
+	}
+
+	static inline bool try_peek_begin(ctrl_t& ctrl, u32 depth, u32* position)
+	{
+		const u32 count = ctrl.count;
+
+		if (ctrl._pop || count <= ctrl._push)
+		{
+			return false;
+		}
+
+		ctrl._pop = 1;
+		*position = ctrl.next + depth - count;
+		return true;
+	}
+
+	static inline void pop_end(ctrl_t& ctrl)
+	{
+		ctrl._pop = 0;
+	}
+
+	static inline bool try_clear_begin_1(ctrl_t& ctrl)
+	{
+		if (ctrl._pop)
+		{
+			return false;
+		}
+
+		ctrl._pop = 1;
+		return true;
+	}
+
+	static inline bool try_clear_begin_2(ctrl_t& ctrl)
+	{
+		if (ctrl._push)
+		{
+			return false;
+		}
+
+		ctrl._push = 1;
+		return true;
 	}
 };
 
@@ -381,4 +359,4 @@ struct alignas(128) CellSyncLFQueue
 CHECK_SIZE_ALIGN(CellSyncLFQueue, 128, 128);
 
 // Prototypes
-ppu_error_code cellSyncLFQueueInitialize(vm::ptr<CellSyncLFQueue> queue, vm::cptr<void> buffer, u32 size, u32 depth, u32 direction, vm::ptr<void> eaSignal);
+error_code cellSyncLFQueueInitialize(vm::ptr<CellSyncLFQueue> queue, vm::cptr<void> buffer, u32 size, u32 depth, u32 direction, vm::ptr<void> eaSignal);

@@ -1,6 +1,5 @@
 #include "File.h"
 #include "StrFmt.h"
-#include "Macro.h"
 #include "SharedMutex.h"
 #include "BEType.h"
 #include "Crypto/sha1.h"
@@ -16,36 +15,35 @@
 
 static std::unique_ptr<wchar_t[]> to_wchar(const std::string& source)
 {
-	const auto buf_size = source.size() + 1; // size + null terminator
+	// String size + null terminator
+	const std::size_t buf_size = source.size() + 1;
 
-	const int size = source.size() < INT_MAX ? static_cast<int>(buf_size) : throw fmt::exception("to_wchar(): invalid source length (0x%llx)", source.size());
+	// Safe size
+	const int size = narrow<int>(buf_size, "to_wchar" HERE);
 
-	std::unique_ptr<wchar_t[]> buffer(new wchar_t[buf_size]); // allocate buffer assuming that length is the max possible size
+	// Buffer for max possible output length
+	std::unique_ptr<wchar_t[]> buffer(new wchar_t[buf_size]);
 
-	if (!MultiByteToWideChar(CP_UTF8, 0, source.c_str(), size, buffer.get(), size))
-	{
-		throw fmt::exception("to_wchar(): MultiByteToWideChar() failed: error %u.", GetLastError());
-	}
+	verify("to_wchar" HERE), MultiByteToWideChar(CP_UTF8, 0, source.c_str(), size, buffer.get(), size);
 
 	return buffer;
 }
 
-static void to_utf8(std::string& result, const wchar_t* source)
+static void to_utf8(std::string& out, const wchar_t* source)
 {
-	const auto length = std::wcslen(source);
+	// String size
+	const std::size_t length = std::wcslen(source);
 
-	const int buf_size = length <= INT_MAX / 3 ? static_cast<int>(length) * 3 + 1 : throw fmt::exception("to_utf8(): invalid source length (0x%llx)", length);
+	// Safe buffer size for max possible output length (including null terminator)
+	const int buf_size = narrow<int>(length * 3 + 1, "to_utf8" HERE);
 
-	result.resize(buf_size); // set max possible length for utf-8 + null terminator
+	// Resize buffer
+	out.resize(buf_size - 1);
 
-	if (const int nwritten = WideCharToMultiByte(CP_UTF8, 0, source, static_cast<int>(length) + 1, &result.front(), buf_size, NULL, NULL))
-	{
-		result.resize(nwritten - 1); // fix the size, remove null terminator
-	}
-	else
-	{
-		throw fmt::exception("to_utf8(): WideCharToMultiByte() failed: error %u.", GetLastError());
-	}
+	const int result = WideCharToMultiByte(CP_UTF8, 0, source, static_cast<int>(length) + 1, &out.front(), buf_size, NULL, NULL);
+
+	// Fix the size
+	out.resize(verify("to_utf8" HERE, result) - 1);
 }
 
 static time_t to_time(const ULARGE_INTEGER& ft)
@@ -82,7 +80,7 @@ static fs::error to_error(DWORD e)
 	case ERROR_NEGATIVE_SEEK: return fs::error::inval;
 	case ERROR_DIRECTORY: return fs::error::inval;
 	case ERROR_INVALID_NAME: return fs::error::inval;
-	default: throw fmt::exception("Unknown Win32 error: %u.", e);
+	default: fmt::throw_exception("Unknown Win32 error: %u.", e);
 	}
 }
 
@@ -111,7 +109,7 @@ static fs::error to_error(int e)
 	case ENOENT: return fs::error::noent;
 	case EEXIST: return fs::error::exist;
 	case EINVAL: return fs::error::inval;
-	default: throw fmt::exception("Unknown system error: %d.", e);
+	default: fmt::throw_exception("Unknown system error: %d.", e);
 	}
 }
 
@@ -174,7 +172,7 @@ std::shared_ptr<fs::device_base> fs::get_virtual_device(const std::string& path)
 
 std::shared_ptr<fs::device_base> fs::set_virtual_device(const std::string& name, const std::shared_ptr<device_base>& device)
 {
-	EXPECTS(name.size() > 2 && name[0] == '/' && name[1] == '/' && name.find('/', 2) == -1);
+	verify(HERE), name.size() > 2, name[0] == '/', name[1] == '/', name.find('/', 2) == -1;
 
 	return get_device_manager().set_device(name, device);
 }
@@ -202,33 +200,6 @@ std::string fs::get_parent_dir(const std::string& path)
 		}
 	}
 }
-
-static const auto test_get_parent_dir = []() -> bool
-{
-	// Success:
-	VERIFY(fs::get_parent_dir("/x/y///") == "/x");
-	VERIFY(fs::get_parent_dir("/x/y/") == "/x");
-	VERIFY(fs::get_parent_dir("/x/y") == "/x");
-	VERIFY(fs::get_parent_dir("x:/y") == "x:");
-	VERIFY(fs::get_parent_dir("//x/y") == "//x");
-
-	// Failure:
-	VERIFY(fs::get_parent_dir("").empty());
-	VERIFY(fs::get_parent_dir("x/").empty());
-	VERIFY(fs::get_parent_dir("x").empty());
-	VERIFY(fs::get_parent_dir("x///").empty());
-	VERIFY(fs::get_parent_dir("/x/").empty());
-	VERIFY(fs::get_parent_dir("/x").empty());
-	VERIFY(fs::get_parent_dir("/").empty());
-	VERIFY(fs::get_parent_dir("//").empty());
-	VERIFY(fs::get_parent_dir("//x").empty());
-	VERIFY(fs::get_parent_dir("//x/").empty());
-	VERIFY(fs::get_parent_dir("///").empty());
-	VERIFY(fs::get_parent_dir("///x").empty());
-	VERIFY(fs::get_parent_dir("///x/").empty());
-
-	return false;
-}();
 
 bool fs::stat(const std::string& path, stat_t& info)
 {
@@ -465,7 +436,7 @@ bool fs::rename(const std::string& from, const std::string& to)
 
 	if (device != get_virtual_device(to))
 	{
-		throw fmt::exception("fs::rename() between different devices not implemented.\nFrom: %s\nTo: %s", from, to);
+		fmt::throw_exception("fs::rename() between different devices not implemented.\nFrom: %s\nTo: %s", from, to);
 	}
 
 	if (device)
@@ -498,7 +469,7 @@ bool fs::copy_file(const std::string& from, const std::string& to, bool overwrit
 
 	if (device != get_virtual_device(to) || device) // TODO
 	{
-		throw fmt::exception("fs::copy_file() for virtual devices not implemented.\nFrom: %s\nTo: %s", from, to);
+		fmt::throw_exception("fs::copy_file() for virtual devices not implemented.\nFrom: %s\nTo: %s", from, to);
 	}
 
 #ifdef _WIN32
@@ -622,15 +593,15 @@ bool fs::truncate_file(const std::string& path, u64 length)
 
 void fs::file::xnull() const
 {
-	throw std::logic_error("fs::file is null");
+	fmt::throw_exception<std::logic_error>("fs::file is null");
 }
 
 void fs::file::xfail() const
 {
-	throw fmt::exception("Unexpected fs::error %s", g_tls_error);
+	fmt::throw_exception("Unexpected fs::error %s", g_tls_error);
 }
 
-bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
+bool fs::file::open(const std::string& path, bs_t<open_mode> mode)
 {
 	if (auto device = get_virtual_device(path))
 	{
@@ -645,25 +616,25 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 
 #ifdef _WIN32
 	DWORD access = 0;
-	if (mode & fs::read) access |= GENERIC_READ;
-	if (mode & fs::write) access |= mode & fs::append ? FILE_APPEND_DATA : GENERIC_WRITE;
+	if (test(mode & fs::read)) access |= GENERIC_READ;
+	if (test(mode & fs::write)) access |= test(mode & fs::append) ? FILE_APPEND_DATA : GENERIC_WRITE;
 
 	DWORD disp = 0;
-	if (mode & fs::create)
+	if (test(mode & fs::create))
 	{
 		disp =
-			mode & fs::excl ? CREATE_NEW :
-			mode & fs::trunc ? CREATE_ALWAYS : OPEN_ALWAYS;
+			test(mode & fs::excl) ? CREATE_NEW :
+			test(mode & fs::trunc) ? CREATE_ALWAYS : OPEN_ALWAYS;
 	}
 	else
 	{
-		if (mode & fs::excl)
+		if (test(mode & fs::excl))
 		{
 			g_tls_error = error::inval;
 			return false;
 		}
 
-		disp = mode & fs::trunc ? TRUNCATE_EXISTING : OPEN_EXISTING;
+		disp = test(mode & fs::trunc) ? TRUNCATE_EXISTING : OPEN_EXISTING;
 	}
 
 	const HANDLE handle = CreateFileW(to_wchar(path).get(), access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, disp, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -692,10 +663,7 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 		stat_t stat() override
 		{
 			FILE_BASIC_INFO basic_info;
-			if (!GetFileInformationByHandleEx(m_handle, FileBasicInfo, &basic_info, sizeof(FILE_BASIC_INFO)))
-			{
-				throw fmt::exception("Win32 error: %u." HERE, GetLastError());
-			}
+			verify("file::stat" HERE), GetFileInformationByHandleEx(m_handle, FileBasicInfo, &basic_info, sizeof(FILE_BASIC_INFO));
 
 			stat_t info;
 			info.is_directory = (basic_info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -726,27 +694,17 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 				return false;
 			}
 
-			const BOOL result = SetEndOfFile(m_handle); // change file size
-
-			if (!result || !SetFilePointerEx(m_handle, old, NULL, FILE_BEGIN)) // restore position
-			{
-				throw fmt::exception("Win32 error: %u." HERE, GetLastError());
-			}
-
-			return result != FALSE;
+			verify("file::trunc" HERE), SetEndOfFile(m_handle), SetFilePointerEx(m_handle, old, NULL, FILE_BEGIN);
+			return true;
 		}
 
 		u64 read(void* buffer, u64 count) override
 		{
 			// TODO (call ReadFile multiple times if count is too big)
-			const int size = ::narrow<int>(count, "Too big count" HERE);
-			EXPECTS(size >= 0);
+			const int size = narrow<int>(count, "file::read" HERE);
 
 			DWORD nread;
-			if (!ReadFile(m_handle, buffer, size, &nread, NULL))
-			{
-				throw fmt::exception("Win32 error: %u." HERE, GetLastError());
-			}
+			verify("file::read" HERE), ReadFile(m_handle, buffer, size, &nread, NULL);
 
 			return nread;
 		}
@@ -754,14 +712,10 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 		u64 write(const void* buffer, u64 count) override
 		{
 			// TODO (call WriteFile multiple times if count is too big)
-			const int size = ::narrow<int>(count, "Too big count" HERE);
-			EXPECTS(size >= 0);
+			const int size = narrow<int>(count, "file::write" HERE);
 
 			DWORD nwritten;
-			if (!WriteFile(m_handle, buffer, size, &nwritten, NULL))
-			{
-				throw fmt::exception("Win32 error: %u." HERE, GetLastError());
-			}
+			verify("file::write" HERE), WriteFile(m_handle, buffer, size, &nwritten, NULL);
 
 			return nwritten;
 		}
@@ -775,12 +729,9 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 				whence == seek_set ? FILE_BEGIN :
 				whence == seek_cur ? FILE_CURRENT :
 				whence == seek_end ? FILE_END :
-				throw fmt::exception("Invalid whence (0x%x)" HERE, whence);
+				(fmt::throw_exception("Invalid whence (0x%x)" HERE, whence), 0);
 
-			if (!SetFilePointerEx(m_handle, pos, &pos, mode))
-			{
-				throw fmt::exception("Win32 error: %u." HERE, GetLastError());
-			}
+			verify("file::seek" HERE), SetFilePointerEx(m_handle, pos, &pos, mode);
 
 			return pos.QuadPart;
 		}
@@ -788,10 +739,7 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 		u64 size() override
 		{
 			LARGE_INTEGER size;
-			if (!GetFileSizeEx(m_handle, &size))
-			{
-				throw fmt::exception("Win32 error: %u." HERE, GetLastError());
-			}
+			verify("file::size" HERE), GetFileSizeEx(m_handle, &size);
 
 			return size.QuadPart;
 		}
@@ -801,14 +749,14 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 #else
 	int flags = 0;
 
-	if (mode & fs::read && mode & fs::write) flags |= O_RDWR;
-	else if (mode & fs::read) flags |= O_RDONLY;
-	else if (mode & fs::write) flags |= O_WRONLY;
+	if (test(mode & fs::read) && test(mode & fs::write)) flags |= O_RDWR;
+	else if (test(mode & fs::read)) flags |= O_RDONLY;
+	else if (test(mode & fs::write)) flags |= O_WRONLY;
 
-	if (mode & fs::append) flags |= O_APPEND;
-	if (mode & fs::create) flags |= O_CREAT;
-	if (mode & fs::trunc) flags |= O_TRUNC;
-	if (mode & fs::excl) flags |= O_EXCL;
+	if (test(mode & fs::append)) flags |= O_APPEND;
+	if (test(mode & fs::create)) flags |= O_CREAT;
+	if (test(mode & fs::trunc)) flags |= O_TRUNC;
+	if (test(mode & fs::excl)) flags |= O_EXCL;
 
 	const int fd = ::open(path.c_str(), flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
@@ -836,10 +784,7 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 		stat_t stat() override
 		{
 			struct ::stat file_info;
-			if (::fstat(m_fd, &file_info) != 0)
-			{
-				throw fmt::exception("System error: %d." HERE, errno);
-			}
+			verify("file::stat" HERE), ::fstat(m_fd, &file_info) == 0;
 
 			stat_t info;
 			info.is_directory = S_ISDIR(file_info.st_mode);
@@ -866,10 +811,7 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 		u64 read(void* buffer, u64 count) override
 		{
 			const auto result = ::read(m_fd, buffer, count);
-			if (result == -1)
-			{
-				throw fmt::exception("System error: %d." HERE, errno);
-			}
+			verify("file::read" HERE), result != -1;
 
 			return result;
 		}
@@ -877,10 +819,7 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 		u64 write(const void* buffer, u64 count) override
 		{
 			const auto result = ::write(m_fd, buffer, count);
-			if (result == -1)
-			{
-				throw fmt::exception("System error: %d." HERE, errno);
-			}
+			verify("file::write" HERE), result != -1;
 
 			return result;
 		}
@@ -891,13 +830,10 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 				whence == seek_set ? SEEK_SET :
 				whence == seek_cur ? SEEK_CUR :
 				whence == seek_end ? SEEK_END :
-				throw fmt::exception("Invalid whence (0x%x)" HERE, whence);
+				(fmt::throw_exception("Invalid whence (0x%x)" HERE, whence), 0);
 
 			const auto result = ::lseek(m_fd, offset, mode);
-			if (result == -1)
-			{
-				throw fmt::exception("System error: %d." HERE, errno);
-			}
+			verify("file::seek" HERE), result != -1;
 
 			return result;
 		}
@@ -905,10 +841,7 @@ bool fs::file::open(const std::string& path, bitset_t<open_mode> mode)
 		u64 size() override
 		{
 			struct ::stat file_info;
-			if (::fstat(m_fd, &file_info) != 0)
-			{
-				throw fmt::exception("System error: %d." HERE, errno);
-			}
+			verify("file::size" HERE), ::fstat(m_fd, &file_info) == 0;
 
 			return file_info.st_size;
 		}
@@ -938,26 +871,27 @@ fs::file::file(const void* ptr, std::size_t size)
 
 		fs::stat_t stat() override
 		{
-			throw std::logic_error("Not supported" HERE);
+			fmt::throw_exception<std::logic_error>("Not supported" HERE);
 		}
 
 		bool trunc(u64 length) override
 		{
-			throw std::logic_error("Not allowed" HERE);
+			fmt::throw_exception<std::logic_error>("Not allowed" HERE);
 		}
 
 		u64 read(void* buffer, u64 count) override
 		{
 			const u64 start = m_pos;
 			const u64 end = seek(count, fs::seek_cur);
-			const u64 read_size = end >= start ? end - start : throw std::logic_error("Stream overflow" HERE);
+			if (end < start) fmt::throw_exception<std::logic_error>("Stream overflow" HERE);
+			const u64 read_size = end - start;
 			std::memcpy(buffer, m_ptr + start, read_size);
 			return read_size;
 		}
 
 		u64 write(const void* buffer, u64 count) override
 		{
-			throw std::logic_error("Not allowed" HERE);
+			fmt::throw_exception<std::logic_error>("Not allowed" HERE);
 		}
 
 		u64 seek(s64 offset, fs::seek_mode whence) override
@@ -966,7 +900,7 @@ fs::file::file(const void* ptr, std::size_t size)
 				whence == fs::seek_set ? m_pos = std::min<u64>(offset, m_size) :
 				whence == fs::seek_cur ? m_pos = std::min<u64>(offset + m_pos, m_size) :
 				whence == fs::seek_end ? m_pos = std::min<u64>(offset + m_size, m_size) :
-				throw fmt::exception("Invalid whence (0x%x)" HERE, whence);
+				(fmt::throw_exception("Invalid whence (0x%x)" HERE, whence), 0);
 		}
 
 		u64 size() override
@@ -980,7 +914,7 @@ fs::file::file(const void* ptr, std::size_t size)
 
 void fs::dir::xnull() const
 {
-	throw std::logic_error("fs::dir is null");
+	fmt::throw_exception<std::logic_error>("fs::dir is null");
 }
 
 bool fs::dir::open(const std::string& path)
@@ -998,7 +932,7 @@ bool fs::dir::open(const std::string& path)
 
 #ifdef _WIN32
 	WIN32_FIND_DATAW found;
-	const auto handle = FindFirstFileW(to_wchar(path + "/*").get(), &found);
+	const auto handle = FindFirstFileExW(to_wchar(path + "/*").get(), FindExInfoBasic, &found, FindExSearchNameMatch, NULL, FIND_FIRST_EX_CASE_SENSITIVE | FIND_FIRST_EX_LARGE_FETCH);
 
 	if (handle == INVALID_HANDLE_VALUE)
 	{
@@ -1008,8 +942,6 @@ bool fs::dir::open(const std::string& path)
 
 	class windows_dir final : public dir_base
 	{
-		const HANDLE m_handle;
-
 		std::vector<dir_entry> m_entries;
 		std::size_t m_pos = 0;
 
@@ -1029,33 +961,24 @@ bool fs::dir::open(const std::string& path)
 		}
 
 	public:
-		windows_dir(HANDLE handle, const WIN32_FIND_DATAW& found)
-			: m_handle(handle)
+		windows_dir(HANDLE handle, WIN32_FIND_DATAW& found)
 		{
 			add_entry(found);
-		}
 
-		~windows_dir()
-		{
-			FindClose(m_handle);
+			while (FindNextFileW(handle, &found))
+			{
+				add_entry(found);
+			}
+
+			verify("dir::read" HERE), ERROR_NO_MORE_FILES == GetLastError();
+			FindClose(handle);
 		}
 
 		bool read(dir_entry& out) override
 		{
-			if (m_pos == m_entries.size())
+			if (m_pos >= m_entries.size())
 			{
-				WIN32_FIND_DATAW found;
-				if (!FindNextFileW(m_handle, &found))
-				{
-					if (ERROR_NO_MORE_FILES == GetLastError())
-					{
-						return false;
-					}
-
-					throw fmt::exception("Win32 error: %u." HERE, GetLastError());
-				}
-
-				add_entry(found);
+				return false;
 			}
 
 			out = m_entries[m_pos++];
@@ -1102,10 +1025,7 @@ bool fs::dir::open(const std::string& path)
 			}
 
 			struct ::stat file_info;
-			if (::fstatat(::dirfd(m_dd), found->d_name, &file_info, 0) != 0)
-			{
-				throw fmt::exception("System error: %d." HERE, errno);
-			}
+			verify("dir::read" HERE), ::fstatat(::dirfd(m_dd), found->d_name, &file_info, 0) == 0;
 
 			info.name = found->d_name;
 			info.is_directory = S_ISDIR(file_info.st_mode);
@@ -1332,4 +1252,38 @@ u64 fs::get_dir_size(const std::string& path)
 	}
 
 	return result;
+}
+
+template<>
+void fmt_class_string<fs::seek_mode>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](auto arg)
+	{
+		switch (arg)
+		{
+		STR_CASE(fs::seek_mode::seek_set);
+		STR_CASE(fs::seek_mode::seek_cur);
+		STR_CASE(fs::seek_mode::seek_end);
+		}
+
+		return unknown;
+	});
+}
+
+template<>
+void fmt_class_string<fs::error>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](auto arg)
+	{
+		switch (arg)
+		{
+		case fs::error::ok: return "OK";
+
+		case fs::error::inval: return "Invalid arguments";
+		case fs::error::noent: return "Not found";
+		case fs::error::exist: return "Already exists";
+		}
+
+		return unknown;
+	});
 }

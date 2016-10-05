@@ -90,7 +90,7 @@ public:
 	template<typename T, T* Var>
 	static void register_static_variable(const char* module, const char* name, u32 vnid, void(*init)())
 	{
-		static_assert(std::is_same<CV u32, CV typename T::addr_type>::value, "Static variable registration: vm::gvar<T> expected");
+		static_assert(std::is_same<u32, std::decay_t<typename T::addr_type>>::value, "Static variable registration: vm::gvar<T> expected");
 
 		auto& info = access_static_variable(module, vnid);
 
@@ -197,7 +197,7 @@ public:
 
 // Call specified function directly if LLE is not available, call LLE equivalent in callback style otherwise
 template<typename T, T Func, typename... Args, typename RT = std::result_of_t<T(Args...)>>
-inline RT ppu_execute_function_or_callback(const char* name, PPUThread& ppu, Args&&... args)
+inline RT ppu_execute_function_or_callback(const char* name, ppu_thread& ppu, Args&&... args)
 {
 	return Func(std::forward<Args>(args)...);
 }

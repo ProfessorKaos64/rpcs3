@@ -17,8 +17,6 @@
 
 extern logs::channel cellSpurs;
 
-extern std::mutex& get_current_thread_mutex();
-
 //----------------------------------------------------------------------------
 // Function prototypes
 //----------------------------------------------------------------------------
@@ -774,7 +772,7 @@ void spursSysServiceIdleHandler(SPUThread& spu, SpursKernelContext* ctxt)
 {
 	bool shouldExit;
 
-	std::unique_lock<std::mutex> lock(get_current_thread_mutex(), std::defer_lock);
+	std::unique_lock<named_thread> lock(spu, std::defer_lock);
 
 	while (true)
 	{
@@ -864,8 +862,8 @@ void spursSysServiceIdleHandler(SPUThread& spu, SpursKernelContext* ctxt)
 		{
 			// The system service blocks by making a reservation and waiting on the lock line reservation lost event.
 			CHECK_EMU_STATUS;
-			if (!lock) lock.lock();
-			get_current_thread_cv().wait_for(lock, 1ms);
+			if (!lock) { lock.lock(); continue; }
+			thread_ctrl::wait_for(1000);
 			continue;
 		}
 
@@ -1390,7 +1388,7 @@ bool spursTasksetSyscallEntry(SPUThread& spu)
 		spu.gpr[3]._u32[3] = spursTasksetProcessSyscall(spu, spu.gpr[3]._u32[3], spu.gpr[4]._u32[3]);
 
 		// Resume the previously executing task if the syscall did not cause a context switch
-		throw EXCEPTION("Broken (TODO)");
+		fmt::throw_exception("Broken (TODO)" HERE);
 		//if (spu.m_is_branch == false) {
 		//    spursTasksetResumeTask(spu);
 		//}
@@ -1821,7 +1819,7 @@ void spursTasksetDispatch(SPUThread& spu)
 		{
 			// TODO: Figure this out
 			spu.status |= SPU_STATUS_STOPPED_BY_STOP;
-			throw cpu_state::stop;
+			throw cpu_flag::stop;
 		}
 
 		spursTasksetStartTask(spu, taskInfo->args);
@@ -1875,7 +1873,7 @@ void spursTasksetDispatch(SPUThread& spu)
 		{
 			// TODO: Figure this out
 			spu.status |= SPU_STATUS_STOPPED_BY_STOP;
-			throw cpu_state::stop;
+			throw cpu_flag::stop;
 		}
 
 		spu.gpr[3].clear();

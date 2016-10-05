@@ -10,6 +10,33 @@
 const ppu_decoder<ppu_itype> s_ppu_itype;
 const ppu_decoder<ppu_iname> s_ppu_iname;
 
+template<>
+void fmt_class_string<ppu_attr>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](ppu_attr value)
+	{
+		switch (value)
+		{
+		case ppu_attr::known_addr: return "known_addr";
+		case ppu_attr::known_size: return "known_size";
+		case ppu_attr::no_return: return "no_return";
+		case ppu_attr::no_size: return "no_size";
+		case ppu_attr::uses_r0: return "uses_r0";
+		case ppu_attr::entry_point: return "entry_point";
+		case ppu_attr::complex_stack: return "complex_stack";
+		case ppu_attr::__bitset_enum_max: break;
+		}
+
+		return unknown;
+	});
+}
+
+template<>
+void fmt_class_string<bs_t<ppu_attr>>::format(std::string& out, u64 arg)
+{
+	format_bitset(out, arg, "[", ",", "]", &fmt_class_string<ppu_attr>::format);
+}
+
 void ppu_validate(const std::string& fname, const std::vector<ppu_function>& funcs, u32 reloc)
 {
 	// Load custom PRX configuration if available
@@ -321,7 +348,7 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 
 		if (func.addr)
 		{
-			// Update TOC (TODO: this doesn't work well)
+			// Update TOC (TODO: this doesn't work well, must update TOC recursively)
 			if (func.toc == 0 || toc == -1)
 			{
 				func.toc = toc;
@@ -371,7 +398,7 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 	{
 		for (auto it = funcs.lower_bound(addr), end = funcs.end(); it != end; it++)
 		{
-			if (it->second.attr & ppu_attr::known_addr)
+			if (test(it->second.attr, ppu_attr::known_addr))
 			{
 				return it->first;
 			}
@@ -402,6 +429,10 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 
 			const u32 addr = ptr[0];
 			const u32 _toc = ptr[1];
+
+			// Rough Table of Contents borders
+			const u32 _toc_begin = _toc - 0x8000;
+			const u32 _toc_end = _toc + 0x8000;
 
 			// TODO: improve TOC constraints
 			if (_toc % 4 || _toc == 0 || _toc >= 0x40000000 || (_toc >= start && _toc < end))
@@ -436,8 +467,8 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 		}
 	}
 
-	// Secondary attempt (TODO)
-	if (secs.empty() && lib_toc)
+	// Secondary attempt (TODO, needs better strategy)
+	if (/*secs.empty() &&*/ lib_toc)
 	{
 		add_toc(lib_toc);
 	}
@@ -592,6 +623,8 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 					func.size = 0x4;
 					func.blocks.emplace(func.addr, func.size);
 					func.attr += new_func.attr & ppu_attr::no_return;
+					func.called_from.emplace(target);
+					func.gate_target = target;
 					continue;
 				}
 			}
@@ -620,7 +653,9 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 
 					func.size = 0x10;
 					func.blocks.emplace(func.addr, func.size);
-					func.attr += new_func.attr & ppu_attr::no_return;				
+					func.attr += new_func.attr & ppu_attr::no_return;
+					func.called_from.emplace(target);
+					func.gate_target = target;
 					continue;
 				}
 			}
@@ -668,7 +703,7 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 		}
 
 		// Get function limit
-		const u32 func_end = std::min<u32>(get_limit(func.addr + 1), func.attr & ppu_attr::known_size ? func.addr + func.size : end);
+		const u32 func_end = std::min<u32>(get_limit(func.addr + 1), test(func.attr, ppu_attr::known_size) ? func.addr + func.size : end);
 
 		// Block analysis workload
 		std::vector<std::reference_wrapper<std::pair<const u32, u32>>> block_queue;
@@ -701,7 +736,7 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 		}
 
 		// TODO: lower priority?
-		if (func.attr & ppu_attr::no_size)
+		if (test(func.attr, ppu_attr::no_size))
 		{
 			// Get next function
 			const auto _next = funcs.lower_bound(func.blocks.crbegin()->first + 1);
@@ -763,12 +798,12 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 					}
 					
 					// Add next block if necessary
-					if ((is_call && !pfunc->attr.test(ppu_attr::no_return)) || (type == ppu_itype::BC && (op.bo & 0x14) != 0x14))
+					if ((is_call && !test(pfunc->attr, ppu_attr::no_return)) || (type == ppu_itype::BC && (op.bo & 0x14) != 0x14))
 					{
 						add_block(_ptr.addr());
 					}
 
-					if (op.lk && (target == iaddr || pfunc->attr.test(ppu_attr::no_return)))
+					if (op.lk && (target == iaddr || test(pfunc->attr, ppu_attr::no_return)))
 					{
 						// Nothing
 					}
@@ -829,11 +864,12 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 						if (jt_addr != jt_end && _ptr.addr() == jt_addr)
 						{
 							// Acknowledge jumptable detection failure
-							if (!func.attr.test_and_set(ppu_attr::no_size))
+							if (!test(func.attr, ppu_attr::no_size))
 							{
 								LOG_WARNING(PPU, "[0x%x] Jump table not found! 0x%x-0x%x", func.addr, jt_addr, jt_end);
 							}
 
+							func.attr += ppu_attr::no_size;
 							add_block(iaddr);
 							block_queue.clear();
 						}
@@ -857,7 +893,7 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 		}
 		
 		// Finalization: determine function size
-		if (!func.attr.test(ppu_attr::known_size))
+		if (!test(func.attr, ppu_attr::known_size))
 		{
 			const auto last = func.blocks.crbegin();
 
@@ -909,6 +945,7 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 					{
 						if (target < func.addr || target >= func.addr + func.size)
 						{
+							func.called_from.emplace(target);
 							add_func(target, func.toc, func.addr);
 						}
 					}
@@ -922,7 +959,7 @@ std::vector<ppu_function> ppu_analyse(const std::vector<std::pair<u32, u32>>& se
 		}
 
 		// Finalization: decrease known function size (TODO)
-		if (func.attr & ppu_attr::known_size)
+		if (test(func.attr, ppu_attr::known_size))
 		{
 			const auto last = func.blocks.crbegin();
 

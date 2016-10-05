@@ -15,7 +15,7 @@ s32 cellPadInit(u32 max_connect)
 	if (max_connect > CELL_PAD_MAX_PORT_NUM)
 		return CELL_PAD_ERROR_INVALID_PARAMETER;
 
-	const auto handler = fxm::import<PadHandlerBase>(PURE_EXPR(Emu.GetCallbacks().get_pad_handler()));
+	const auto handler = fxm::import<PadHandlerBase>(Emu.GetCallbacks().get_pad_handler);
 
 	if (!handler)
 		return CELL_PAD_ERROR_ALREADY_INITIALIZED;
@@ -108,7 +108,7 @@ s32 cellPadPeriphGetInfo(vm::ptr<CellPadPeriphInfo> info)
 
 s32 cellPadPeriphGetData()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellPadGetData(u32 port_no, vm::ptr<CellPadData> data)
@@ -294,7 +294,7 @@ s32 cellPadGetData(u32 port_no, vm::ptr<CellPadData> data)
 
 s32 cellPadGetRawData(u32 port_no, vm::ptr<CellPadData> data)
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellPadGetDataExtra(u32 port_no, vm::ptr<u32> device_type, vm::ptr<CellPadData> data)

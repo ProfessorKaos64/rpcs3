@@ -44,13 +44,13 @@ HMODULE D3DCompiler;
 
 void loadD3D12FunctionPointers()
 {
-	VERIFY(D3D12Module = LoadLibrary(L"d3d12.dll"));
+	D3D12Module = verify("d3d12.dll", LoadLibrary(L"d3d12.dll"));
 	wrapD3D12CreateDevice = (PFN_D3D12_CREATE_DEVICE)GetProcAddress(D3D12Module, "D3D12CreateDevice");
 	wrapD3D12GetDebugInterface = (PFN_D3D12_GET_DEBUG_INTERFACE)GetProcAddress(D3D12Module, "D3D12GetDebugInterface");
 	wrapD3D12SerializeRootSignature = (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)GetProcAddress(D3D12Module, "D3D12SerializeRootSignature");
-	VERIFY(D3D11Module = LoadLibrary(L"d3d11.dll"));
+	D3D11Module = verify("d3d11.dll", LoadLibrary(L"d3d11.dll"));
 	wrapD3D11On12CreateDevice = (PFN_D3D11ON12_CREATE_DEVICE)GetProcAddress(D3D11Module, "D3D11On12CreateDevice");
-	VERIFY(D3DCompiler = LoadLibrary(L"d3dcompiler_47.dll"));
+	D3DCompiler = verify("d3dcompiler_47.dll", LoadLibrary(L"d3dcompiler_47.dll"));
 	wrapD3DCompile = (pD3DCompile)GetProcAddress(D3DCompiler, "D3DCompile");
 }
 
@@ -356,7 +356,7 @@ void D3D12GSRender::end()
 		.Offset((INT)currentDescriptorIndex + vertex_buffer_count, m_descriptor_stride_srv_cbv_uav)
 		);
 
-	if (m_transform_constants_dirty)
+	if (m_transform_constants_dirty && !g_cfg_rsx_debug_output)
 	{
 		m_current_transform_constants_buffer_descriptor_id = (u32)currentDescriptorIndex + 1 + vertex_buffer_count;
 		upload_and_bind_vertex_shader_constants(currentDescriptorIndex + 1 + vertex_buffer_count);
@@ -442,7 +442,7 @@ void D3D12GSRender::end()
 	get_current_resource_storage().command_list->RSSetScissorRects(1, &get_scissor(rsx::method_registers.scissor_origin_x(), rsx::method_registers.scissor_origin_y(),
 		rsx::method_registers.scissor_width(), rsx::method_registers.scissor_height()));
 
-	get_current_resource_storage().command_list->IASetPrimitiveTopology(get_primitive_topology(draw_mode));
+	get_current_resource_storage().command_list->IASetPrimitiveTopology(get_primitive_topology(rsx::method_registers.current_draw_clause.primitive));
 
 	if (indexed_draw)
 		get_current_resource_storage().command_list->DrawIndexedInstanced((UINT)vertex_count, 1, 0, 0, 0);
@@ -477,7 +477,7 @@ bool is_flip_surface_in_global_memory(rsx::surface_target color_target)
 	case rsx::surface_target::none:
 		return false;
 	}
-	throw EXCEPTION("Wrong color_target");
+	fmt::throw_exception("Wrong color_target" HERE);
 }
 }
 
@@ -489,7 +489,7 @@ void D3D12GSRender::flip(int buffer)
 	if (!is_flip_surface_in_global_memory(rsx::method_registers.surface_color_target()))
 	{
 		resource_storage &storage = get_current_resource_storage();
-		VERIFY(storage.ram_framebuffer == nullptr);
+		verify(HERE), storage.ram_framebuffer == nullptr;
 
 		size_t w = 0, h = 0, row_pitch = 0;
 

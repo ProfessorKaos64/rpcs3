@@ -16,9 +16,9 @@ extern u64 get_system_time();
 
 void lv2_lwcond_t::notify(lv2_lock_t, cpu_thread* thread, const std::shared_ptr<lv2_lwmutex_t>& mutex, bool mode2)
 {
-	auto& ppu = static_cast<PPUThread&>(*thread);
+	auto& ppu = static_cast<ppu_thread&>(*thread);
 
-	ppu.GPR[3] = mode2;  // set to return CELL_EBUSY
+	ppu.gpr[3] = mode2;  // set to return CELL_EBUSY
 
 	if (!mode2)
 	{
@@ -30,8 +30,7 @@ void lv2_lwcond_t::notify(lv2_lock_t, cpu_thread* thread, const std::shared_ptr<
 		mutex->signaled--;
 	}
 
-	VERIFY(!thread->state.test_and_set(cpu_state::signal));
-	(*thread)->notify();
+	thread->set_signal();
 }
 
 s32 _sys_lwcond_create(vm::ptr<u32> lwcond_id, u32 lwmutex_id, vm::ptr<sys_lwcond_t> control, u64 name, u32 arg5)
@@ -82,7 +81,7 @@ s32 _sys_lwcond_signal(u32 lwcond_id, u32 lwmutex_id, u32 ppu_thread_id, u32 mod
 
 	if (mode != 1 && mode != 2 && mode != 3)
 	{
-		throw EXCEPTION("Unknown mode (%d)", mode);
+		fmt::throw_exception("Unknown mode (%d)" HERE, mode);
 	}
 
 	// mode 1: lightweight mutex was initially owned by the calling thread
@@ -135,7 +134,7 @@ s32 _sys_lwcond_signal_all(u32 lwcond_id, u32 lwmutex_id, u32 mode)
 
 	if (mode != 1 && mode != 2)
 	{
-		throw EXCEPTION("Unknown mode (%d)", mode);
+		fmt::throw_exception("Unknown mode (%d)" HERE, mode);
 	}
 
 	// mode 1: lightweight mutex was initially owned by the calling thread
@@ -155,7 +154,7 @@ s32 _sys_lwcond_signal_all(u32 lwcond_id, u32 lwmutex_id, u32 mode)
 	return result;
 }
 
-s32 _sys_lwcond_queue_wait(PPUThread& ppu, u32 lwcond_id, u32 lwmutex_id, u64 timeout)
+s32 _sys_lwcond_queue_wait(ppu_thread& ppu, u32 lwcond_id, u32 lwmutex_id, u64 timeout)
 {
 	sys_lwcond.trace("_sys_lwcond_queue_wait(lwcond_id=0x%x, lwmutex_id=0x%x, timeout=0x%llx)", lwcond_id, lwmutex_id, timeout);
 
@@ -180,7 +179,7 @@ s32 _sys_lwcond_queue_wait(PPUThread& ppu, u32 lwcond_id, u32 lwmutex_id, u64 ti
 	// potential mutex waiter (not added immediately)
 	sleep_entry<cpu_thread> mutex_waiter(cond->sq, ppu, defer_sleep);
 
-	while (!ppu.state.test_and_reset(cpu_state::signal))
+	while (!ppu.state.test_and_reset(cpu_flag::signal))
 	{
 		CHECK_EMU_STATUS;
 
@@ -212,5 +211,5 @@ s32 _sys_lwcond_queue_wait(PPUThread& ppu, u32 lwcond_id, u32 lwmutex_id, u64 ti
 	}
 
 	// return cause
-	return ppu.GPR[3] ? CELL_EBUSY : CELL_OK;
+	return ppu.gpr[3] ? CELL_EBUSY : CELL_OK;
 }

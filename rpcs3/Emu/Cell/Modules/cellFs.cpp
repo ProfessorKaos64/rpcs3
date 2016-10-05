@@ -8,11 +8,13 @@
 
 #include "Utilities/StrUtil.h"
 
+#include <mutex>
+
 logs::channel cellFs("cellFs", logs::level::notice);
 
 s32 cellFsOpen(vm::cptr<char> path, s32 flags, vm::ptr<u32> fd, vm::cptr<void> arg, u64 size)
 {
-	cellFs.warning("cellFsOpen(path=*0x%x, flags=%#o, fd=*0x%x, arg=*0x%x, size=0x%llx) -> sys_fs_open()", path, flags, fd, arg, size);
+	cellFs.warning("cellFsOpen(path=%s, flags=%#o, fd=*0x%x, arg=*0x%x, size=0x%llx) -> sys_fs_open()", path, flags, fd, arg, size);
 
 	// TODO
 
@@ -46,7 +48,7 @@ s32 cellFsClose(u32 fd)
 
 s32 cellFsOpendir(vm::cptr<char> path, vm::ptr<u32> fd)
 {
-	cellFs.warning("cellFsOpendir(path=*0x%x, fd=*0x%x) -> sys_fs_opendir()", path, fd);
+	cellFs.warning("cellFsOpendir(path=%s, fd=*0x%x) -> sys_fs_opendir()", path, fd);
 
 	// TODO
 
@@ -77,7 +79,7 @@ s32 cellFsClosedir(u32 fd)
 
 s32 cellFsStat(vm::cptr<char> path, vm::ptr<CellFsStat> sb)
 {
-	cellFs.warning("cellFsStat(path=*0x%x, sb=*0x%x) -> sys_fs_stat()", path, sb);
+	cellFs.warning("cellFsStat(path=%s, sb=*0x%x) -> sys_fs_stat()", path, sb);
 
 	// TODO
 
@@ -95,7 +97,7 @@ s32 cellFsFstat(u32 fd, vm::ptr<CellFsStat> sb)
 
 s32 cellFsMkdir(vm::cptr<char> path, s32 mode)
 {
-	cellFs.warning("cellFsMkdir(path=*0x%x, mode=%#o) -> sys_fs_mkdir()", path, mode);
+	cellFs.warning("cellFsMkdir(path=%s, mode=%#o) -> sys_fs_mkdir()", path, mode);
 
 	// TODO
 
@@ -105,7 +107,7 @@ s32 cellFsMkdir(vm::cptr<char> path, s32 mode)
 
 s32 cellFsRename(vm::cptr<char> from, vm::cptr<char> to)
 {
-	cellFs.warning("cellFsRename(from=*0x%x, to=*0x%x) -> sys_fs_rename()", from, to);
+	cellFs.warning("cellFsRename(from=%s, to=%s) -> sys_fs_rename()", from, to);
 
 	// TODO
 
@@ -115,7 +117,7 @@ s32 cellFsRename(vm::cptr<char> from, vm::cptr<char> to)
 
 s32 cellFsRmdir(vm::cptr<char> path)
 {
-	cellFs.warning("cellFsRmdir(path=*0x%x) -> sys_fs_rmdir()", path);
+	cellFs.warning("cellFsRmdir(path=%s) -> sys_fs_rmdir()", path);
 
 	// TODO
 
@@ -125,7 +127,7 @@ s32 cellFsRmdir(vm::cptr<char> path)
 
 s32 cellFsUnlink(vm::cptr<char> path)
 {
-	cellFs.warning("cellFsUnlink(path=*0x%x) -> sys_fs_unlink()", path);
+	cellFs.warning("cellFsUnlink(path=%s) -> sys_fs_unlink()", path);
 
 	// TODO
 
@@ -168,7 +170,7 @@ s32 cellFsFGetBlockSize(u32 fd, vm::ptr<u64> sector_size, vm::ptr<u64> block_siz
 
 s32 cellFsGetBlockSize(vm::cptr<char> path, vm::ptr<u64> sector_size, vm::ptr<u64> block_size)
 {
-	cellFs.warning("cellFsGetBlockSize(path=*0x%x, sector_size=*0x%x, block_size=*0x%x) -> sys_fs_get_block_size()", path, sector_size, block_size);
+	cellFs.warning("cellFsGetBlockSize(path=%s, sector_size=*0x%x, block_size=*0x%x) -> sys_fs_get_block_size()", path, sector_size, block_size);
 
 	// TODO
 
@@ -178,7 +180,7 @@ s32 cellFsGetBlockSize(vm::cptr<char> path, vm::ptr<u64> sector_size, vm::ptr<u6
 
 s32 cellFsTruncate(vm::cptr<char> path, u64 size)
 {
-	cellFs.warning("cellFsTruncate(path=*0x%x, size=0x%llx) -> sys_fs_truncate()", path, size);
+	cellFs.warning("cellFsTruncate(path=%s, size=0x%llx) -> sys_fs_truncate()", path, size);
 
 	// TODO
 
@@ -196,7 +198,7 @@ s32 cellFsFtruncate(u32 fd, u64 size)
 
 s32 cellFsChmod(vm::cptr<char> path, s32 mode)
 {
-	cellFs.warning("cellFsChmod(path=*0x%x, mode=%#o) -> sys_fs_chmod()", path, mode);
+	cellFs.warning("cellFsChmod(path=%s, mode=%#o) -> sys_fs_chmod()", path, mode);
 
 	// TODO
 
@@ -206,8 +208,7 @@ s32 cellFsChmod(vm::cptr<char> path, s32 mode)
 
 s32 cellFsGetFreeSize(vm::cptr<char> path, vm::ptr<u32> block_size, vm::ptr<u64> block_count)
 {
-	cellFs.warning("cellFsGetFreeSize(path=*0x%x, block_size=*0x%x, block_count=*0x%x)", path, block_size, block_count);
-	cellFs.warning("*** path = '%s'", path.get_ptr());
+	cellFs.warning("cellFsGetFreeSize(path=%s, block_size=*0x%x, block_count=*0x%x)", path, block_size, block_count);
 
 	// TODO: Get real values. Currently, it always returns 40 GB of free space divided in 4 KB blocks
 	*block_size = 4096; // ?
@@ -261,7 +262,7 @@ s32 cellFsGetDirectoryEntries(u32 fd, vm::ptr<CellFsDirectoryEntry> entries, u32
 	return CELL_OK;
 }
 
-ppu_error_code cellFsReadWithOffset(u32 fd, u64 offset, vm::ptr<void> buf, u64 buffer_size, vm::ptr<u64> nread)
+error_code cellFsReadWithOffset(u32 fd, u64 offset, vm::ptr<void> buf, u64 buffer_size, vm::ptr<u64> nread)
 {
 	cellFs.trace("cellFsReadWithOffset(fd=%d, offset=0x%llx, buf=*0x%x, buffer_size=0x%llx, nread=*0x%x)", fd, offset, buf, buffer_size, nread);
 
@@ -287,10 +288,10 @@ ppu_error_code cellFsReadWithOffset(u32 fd, u64 offset, vm::ptr<void> buf, u64 b
 	// Write size read
 	if (nread) *nread = rc && rc != CELL_EFSSPECIFIC ? 0 : arg->out_size.value();
 
-	return NOT_AN_ERROR(rc ? rc : arg->out_code.value());
+	return not_an_error(rc ? rc : arg->out_code.value());
 }
 
-ppu_error_code cellFsWriteWithOffset(u32 fd, u64 offset, vm::cptr<void> buf, u64 data_size, vm::ptr<u64> nwrite)
+error_code cellFsWriteWithOffset(u32 fd, u64 offset, vm::cptr<void> buf, u64 data_size, vm::ptr<u64> nwrite)
 {
 	cellFs.trace("cellFsWriteWithOffset(fd=%d, offset=0x%llx, buf=*0x%x, data_size=0x%llx, nwrite=*0x%x)", fd, offset, buf, data_size, nwrite);
 
@@ -322,7 +323,7 @@ ppu_error_code cellFsWriteWithOffset(u32 fd, u64 offset, vm::cptr<void> buf, u64
 	// Write size written
 	if (nwrite) *nwrite = rc && rc != CELL_EFSSPECIFIC ? 0 : arg->out_size.value();
 
-	return NOT_AN_ERROR(rc ? rc : arg->out_code.value());
+	return not_an_error(rc ? rc : arg->out_code.value());
 }
 
 s32 cellFsStReadInit(u32 fd, vm::cptr<CellFsRingBuffer> ringbuf)
@@ -646,7 +647,7 @@ s32 sdata_unpack(const std::string& packed_file, const std::string& unpacked_fil
 
 s32 cellFsSdataOpen(vm::cptr<char> path, s32 flags, vm::ptr<u32> fd, vm::cptr<void> arg, u64 size)
 {
-	cellFs.notice("cellFsSdataOpen(path=*0x%x, flags=%#o, fd=*0x%x, arg=*0x%x, size=0x%llx)", path, flags, fd, arg, size);
+	cellFs.notice("cellFsSdataOpen(path=%s, flags=%#o, fd=*0x%x, arg=*0x%x, size=0x%llx)", path, flags, fd, arg, size);
 
 	if (flags != CELL_FS_O_RDONLY)
 	{
@@ -691,53 +692,72 @@ struct lv2_fs_mount_point
 	std::mutex mutex;
 };
 
-void fsAio(vm::ptr<CellFsAio> aio, bool write, s32 xid, fs_aio_cb_t func)
+struct fs_aio_thread : ppu_thread
 {
-	cellFs.notice("FS AIO Request(%d): fd=%d, offset=0x%llx, buf=*0x%x, size=0x%llx, user_data=0x%llx", xid, aio->fd, aio->offset, aio->buf, aio->size, aio->user_data);
+	using ppu_thread::ppu_thread;
 
-	s32 error = CELL_OK;
-	u64 result = 0;
-
-	const auto file = idm::get<lv2_file>(aio->fd);
-
-	if (!file || (!write && file->flags & CELL_FS_O_WRONLY) || (write && !(file->flags & CELL_FS_O_ACCMODE)))
+	virtual void cpu_task() override
 	{
-		error = CELL_EBADF;
+		while (cmd64 cmd = cmd_wait())
+		{
+			const u32 type = cmd.arg1<u32>();
+			const s32 xid = cmd.arg2<s32>();
+			const cmd64 cmd2 = cmd_get(1);
+			const auto aio = cmd2.arg1<vm::ptr<CellFsAio>>();
+			const auto func = cmd2.arg2<fs_aio_cb_t>();
+			cmd_pop(1);
+
+			s32 error = CELL_OK;
+			u64 result = 0;
+
+			const auto file = idm::get<lv2_file>(aio->fd);
+
+			if (!file || (type == 1 && file->flags & CELL_FS_O_WRONLY) || (type == 2 && !(file->flags & CELL_FS_O_ACCMODE)))
+			{
+				error = CELL_EBADF;
+			}
+			else
+			{
+				std::lock_guard<std::mutex> lock(file->mp->mutex);
+
+				const auto old_pos = file->file.pos(); file->file.seek(aio->offset);
+
+				result = type == 2
+					? file->op_write(aio->buf, aio->size)
+					: file->op_read(aio->buf, aio->size);
+
+				file->file.seek(old_pos);
+			}
+
+			func(*this, aio, error, xid, result);
+		}
 	}
-	else
+};
+
+struct fs_aio_manager
+{
+	std::shared_ptr<fs_aio_thread> thread;
+
+	fs_aio_manager()
+		: thread(idm::make_ptr<ppu_thread, fs_aio_thread>("FS AIO Thread", 500))
 	{
-		std::lock_guard<std::mutex> lock(file->mp->mutex);
-
-		const auto old_pos = file->file.pos(); file->file.seek(aio->offset);
-
-		result = write
-			? file->op_write(aio->buf, aio->size)
-			: file->op_read(aio->buf, aio->size);
-
-		file->file.seek(old_pos);
+		thread->run();
 	}
-
-	// should be executed directly by FS AIO thread
-	Emu.GetCallbackManager().Async([=](PPUThread& ppu)
-	{
-		func(ppu, aio, error, xid, result);
-	});
-}
+};
 
 s32 cellFsAioInit(vm::cptr<char> mount_point)
 {
-	cellFs.warning("cellFsAioInit(mount_point=*0x%x)", mount_point);
-	cellFs.warning("*** mount_point = '%s'", mount_point.get_ptr());
+	cellFs.warning("cellFsAioInit(mount_point=%s)", mount_point);
 
 	// TODO: create AIO thread (if not exists) for specified mount point
+	fxm::get_always<fs_aio_manager>();
 
 	return CELL_OK;
 }
 
 s32 cellFsAioFinish(vm::cptr<char> mount_point)
 {
-	cellFs.warning("cellFsAioFinish(mount_point=*0x%x)", mount_point);
-	cellFs.warning("*** mount_point = '%s'", mount_point.get_ptr());
+	cellFs.warning("cellFsAioFinish(mount_point=%s)", mount_point);
 
 	// TODO: delete existing AIO thread for specified mount point
 
@@ -754,7 +774,15 @@ s32 cellFsAioRead(vm::ptr<CellFsAio> aio, vm::ptr<s32> id, fs_aio_cb_t func)
 
 	const s32 xid = (*id = ++g_fs_aio_id);
 
-	thread_ctrl::spawn("FS AIO Read Thread", COPY_EXPR(fsAio(aio, false, xid, func)));
+	const auto m = fxm::get_always<fs_aio_manager>();
+
+	m->thread->cmd_list
+	({
+		{ 1, xid },
+		{ aio, func },
+	});
+
+	m->thread->lock_notify();
 
 	return CELL_OK;
 }
@@ -767,14 +795,22 @@ s32 cellFsAioWrite(vm::ptr<CellFsAio> aio, vm::ptr<s32> id, fs_aio_cb_t func)
 
 	const s32 xid = (*id = ++g_fs_aio_id);
 
-	thread_ctrl::spawn("FS AIO Write Thread", COPY_EXPR(fsAio(aio, true, xid, func)));
+	const auto m = fxm::get_always<fs_aio_manager>();
+
+	m->thread->cmd_list
+	({
+		{ 2, xid },
+		{ aio, func },
+	});
+
+	m->thread->lock_notify();
 
 	return CELL_OK;
 }
 
 s32 cellFsAioCancel(s32 id)
 {
-	cellFs.warning("cellFsAioCancel(id=%d) -> CELL_EINVAL", id);
+	cellFs.todo("cellFsAioCancel(id=%d) -> CELL_EINVAL", id);
 
 	// TODO: cancelled requests return CELL_ECANCELED through their own callbacks
 
@@ -804,69 +840,69 @@ s32 cellFsSetIoBufferFromDefaultContainer(u32 fd, u32 buffer_size, u32 page_type
 
 s32 cellFsUtime()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsArcadeHddSerialNumber()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsAllocateFileAreaWithInitialData()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsAllocateFileAreaByFdWithoutZeroFill()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsSetIoBuffer()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsAllocateFileAreaByFdWithInitialData()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsTruncate2()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsChangeFileSizeWithoutAllocation()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsAllocateFileAreaWithoutZeroFill(vm::cptr<char> path, u64 size)
 {
-	cellFs.warning("cellFsAllocateFileAreaWithoutZeroFill(path=*0x%x, size=0x%llx)", path, size);
+	cellFs.warning("cellFsAllocateFileAreaWithoutZeroFill(path=%s, size=0x%llx)", path, size);
 
 	return sys_fs_truncate(path, size);
 }
 
 s32 cellFsChangeFileSizeByFdWithoutAllocation()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsSetDiscReadRetrySetting()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsRegisterConversionCallback()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 s32 cellFsUnregisterL10nCallbacks()
 {
-	throw EXCEPTION("");
+	fmt::throw_exception("Unimplemented" HERE);
 }
 
 

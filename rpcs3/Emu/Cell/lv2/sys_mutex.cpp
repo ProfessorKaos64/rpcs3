@@ -18,10 +18,8 @@ void lv2_mutex_t::unlock(lv2_lock_t)
 	if (sq.size())
 	{
 		// pick new owner; protocol is ignored in current implementation
-		owner = std::static_pointer_cast<cpu_thread>(sq.front()->shared_from_this());
-
-		VERIFY(!owner->state.test_and_set(cpu_state::signal));
-		(*owner)->notify();
+		owner = idm::get<ppu_thread>(sq.front()->id);
+		owner->set_signal();
 	}
 }
 
@@ -91,7 +89,7 @@ s32 sys_mutex_destroy(u32 mutex_id)
 	return CELL_OK;
 }
 
-s32 sys_mutex_lock(PPUThread& ppu, u32 mutex_id, u64 timeout)
+s32 sys_mutex_lock(ppu_thread& ppu, u32 mutex_id, u64 timeout)
 {
 	sys_mutex.trace("sys_mutex_lock(mutex_id=0x%x, timeout=0x%llx)", mutex_id, timeout);
 
@@ -127,7 +125,7 @@ s32 sys_mutex_lock(PPUThread& ppu, u32 mutex_id, u64 timeout)
 	// lock immediately if not locked
 	if (!mutex->owner)
 	{
-		mutex->owner = std::static_pointer_cast<cpu_thread>(ppu.shared_from_this());
+		mutex->owner = idm::get<ppu_thread>(ppu.id);
 
 		return CELL_OK;
 	}
@@ -135,7 +133,7 @@ s32 sys_mutex_lock(PPUThread& ppu, u32 mutex_id, u64 timeout)
 	// add waiter; protocol is ignored in current implementation
 	sleep_entry<cpu_thread> waiter(mutex->sq, ppu);
 
-	while (!ppu.state.test_and_reset(cpu_state::signal))
+	while (!ppu.state.test_and_reset(cpu_flag::signal))
 	{
 		CHECK_EMU_STATUS;
 
@@ -159,13 +157,13 @@ s32 sys_mutex_lock(PPUThread& ppu, u32 mutex_id, u64 timeout)
 	// new owner must be set when unlocked
 	if (mutex->owner.get() != &ppu)
 	{
-		throw EXCEPTION("Unexpected mutex owner");
+		fmt::throw_exception("Unexpected mutex owner" HERE);
 	}
 
 	return CELL_OK;
 }
 
-s32 sys_mutex_trylock(PPUThread& ppu, u32 mutex_id)
+s32 sys_mutex_trylock(ppu_thread& ppu, u32 mutex_id)
 {
 	sys_mutex.trace("sys_mutex_trylock(mutex_id=0x%x)", mutex_id);
 
@@ -202,12 +200,12 @@ s32 sys_mutex_trylock(PPUThread& ppu, u32 mutex_id)
 	}
 
 	// own the mutex if free
-	mutex->owner = std::static_pointer_cast<cpu_thread>(ppu.shared_from_this());
+	mutex->owner = idm::get<ppu_thread>(ppu.id);
 
 	return CELL_OK;
 }
 
-s32 sys_mutex_unlock(PPUThread& ppu, u32 mutex_id)
+s32 sys_mutex_unlock(ppu_thread& ppu, u32 mutex_id)
 {
 	sys_mutex.trace("sys_mutex_unlock(mutex_id=0x%x)", mutex_id);
 
@@ -230,7 +228,7 @@ s32 sys_mutex_unlock(PPUThread& ppu, u32 mutex_id)
 	{
 		if (!mutex->recursive)
 		{
-			throw EXCEPTION("Unexpected recursive_count");
+			fmt::throw_exception("Unexpected recursive_count" HERE);
 		}
 		
 		mutex->recursive_count--;

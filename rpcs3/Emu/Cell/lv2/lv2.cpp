@@ -908,28 +908,99 @@ std::array<ppu_function_t, 1024> g_ppu_syscall_table
 	null_func, null_func, null_func, null_func,             //1023  UNS
 };
 
-extern void ppu_execute_syscall(PPUThread& ppu, u64 code)
+template<>
+void fmt_class_string<CellError>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](auto error)
+	{
+		switch (error)
+		{
+		STR_CASE(CELL_EAGAIN);
+		STR_CASE(CELL_EINVAL);
+		STR_CASE(CELL_ENOSYS);
+		STR_CASE(CELL_ENOMEM);
+		STR_CASE(CELL_ESRCH);
+		STR_CASE(CELL_ENOENT);
+		STR_CASE(CELL_ENOEXEC);
+		STR_CASE(CELL_EDEADLK);
+		STR_CASE(CELL_EPERM);
+		STR_CASE(CELL_EBUSY);
+		STR_CASE(CELL_ETIMEDOUT);
+		STR_CASE(CELL_EABORT);
+		STR_CASE(CELL_EFAULT);
+		STR_CASE(CELL_ESTAT);
+		STR_CASE(CELL_EALIGN);
+		STR_CASE(CELL_EKRESOURCE);
+		STR_CASE(CELL_EISDIR);
+		STR_CASE(CELL_ECANCELED);
+		STR_CASE(CELL_EEXIST);
+		STR_CASE(CELL_EISCONN);
+		STR_CASE(CELL_ENOTCONN);
+		STR_CASE(CELL_EAUTHFAIL);
+		STR_CASE(CELL_ENOTMSELF);
+		STR_CASE(CELL_ESYSVER);
+		STR_CASE(CELL_EAUTHFATAL);
+		STR_CASE(CELL_EDOM);
+		STR_CASE(CELL_ERANGE);
+		STR_CASE(CELL_EILSEQ);
+		STR_CASE(CELL_EFPOS);
+		STR_CASE(CELL_EINTR);
+		STR_CASE(CELL_EFBIG);
+		STR_CASE(CELL_EMLINK);
+		STR_CASE(CELL_ENFILE);
+		STR_CASE(CELL_ENOSPC);
+		STR_CASE(CELL_ENOTTY);
+		STR_CASE(CELL_EPIPE);
+		STR_CASE(CELL_EROFS);
+		STR_CASE(CELL_ESPIPE);
+		STR_CASE(CELL_E2BIG);
+		STR_CASE(CELL_EACCES);
+		STR_CASE(CELL_EBADF);
+		STR_CASE(CELL_EIO);
+		STR_CASE(CELL_EMFILE);
+		STR_CASE(CELL_ENODEV);
+		STR_CASE(CELL_ENOTDIR);
+		STR_CASE(CELL_ENXIO);
+		STR_CASE(CELL_EXDEV);
+		STR_CASE(CELL_EBADMSG);
+		STR_CASE(CELL_EINPROGRESS);
+		STR_CASE(CELL_EMSGSIZE);
+		STR_CASE(CELL_ENAMETOOLONG);
+		STR_CASE(CELL_ENOLCK);
+		STR_CASE(CELL_ENOTEMPTY);
+		STR_CASE(CELL_ENOTSUP);
+		STR_CASE(CELL_EFSSPECIFIC);
+		STR_CASE(CELL_EOVERFLOW);
+		STR_CASE(CELL_ENOTMOUNTED);
+		STR_CASE(CELL_ENOTSDATA);
+		}
+
+		return unknown;
+	});
+}
+
+extern void ppu_execute_syscall(ppu_thread& ppu, u64 code)
 {
 	if (code < g_ppu_syscall_table.size())
 	{
 		// If autopause occures, check_status() will hold the thread till unpaused.
-		if (debug::autopause::pause_syscall(code) && ppu.check_status()) throw cpu_state::ret;
+		if (debug::autopause::pause_syscall(code) && ppu.check_state()) throw cpu_flag::ret;
 
 		if (auto func = g_ppu_syscall_table[code])
 		{
 			func(ppu);
-			LOG_TRACE(PPU, "Syscall '%s' (%llu) finished, r3=0x%llx", ppu_get_syscall_name(code), code, ppu.GPR[3]);
+			LOG_TRACE(PPU, "Syscall '%s' (%llu) finished, r3=0x%llx", ppu_get_syscall_name(code), code, ppu.gpr[3]);
 		}
 		else
 		{
 			LOG_TODO(HLE, "Unimplemented syscall %s -> CELL_OK", ppu_get_syscall_name(code));
-			ppu.GPR[3] = 0;
+			ppu.gpr[3] = 0;
 		}
 
 		return;
 	}
 
-	throw fmt::exception("Invalid syscall number (%llu)", code);
+	fmt::throw_exception("Invalid syscall number (%llu)", code);
 }
 
 extern ppu_function_t ppu_get_syscall(u64 code)

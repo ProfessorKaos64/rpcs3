@@ -1,6 +1,6 @@
 #include "stdafx.h"
-#include "rsx_gl_texture.h"
-#include "gl_helpers.h"
+#include "GLTexture.h"
+#include "GLHelpers.h"
 #include "../GCM.h"
 #include "../RSXThread.h"
 #include "../RSXTexture.h"
@@ -37,7 +37,7 @@ namespace
 		case CELL_GCM_TEXTURE_COMPRESSED_DXT23: return GL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
 		case CELL_GCM_TEXTURE_COMPRESSED_DXT45: return GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
 		}
-		throw EXCEPTION("Compressed or unknown texture format %x", texture_format);
+		fmt::throw_exception("Compressed or unknown texture format 0x%x" HERE, texture_format);
 	}
 
 
@@ -66,7 +66,7 @@ namespace
 		case CELL_GCM_TEXTURE_D8R8G8B8: return std::make_tuple(GL_BGRA, GL_UNSIGNED_INT_8_8_8_8);
 		case CELL_GCM_TEXTURE_Y16_X16_FLOAT: return std::make_tuple(GL_RG, GL_HALF_FLOAT);
 		}
-		throw EXCEPTION("Compressed or unknown texture format %x", texture_format);
+		fmt::throw_exception("Compressed or unknown texture format 0x%x" HERE, texture_format);
 	}
 
 	bool is_compressed_format(u32 texture_format)
@@ -99,7 +99,7 @@ namespace
 		case CELL_GCM_TEXTURE_COMPRESSED_DXT45:
 			return true;
 		}
-		throw EXCEPTION("Unknown format %x", texture_format);
+		fmt::throw_exception("Unknown format 0x%x" HERE, texture_format);
 	}
 
 	bool requires_unpack_byte(u32 texture_format)
@@ -133,7 +133,6 @@ namespace
 		case CELL_GCM_TEXTURE_DEPTH24_D8_FLOAT:
 		case CELL_GCM_TEXTURE_DEPTH16:
 		case CELL_GCM_TEXTURE_DEPTH16_FLOAT:
-		case CELL_GCM_TEXTURE_W32_Z32_Y32_X32_FLOAT:
 		case CELL_GCM_TEXTURE_COMPRESSED_DXT1:
 		case CELL_GCM_TEXTURE_COMPRESSED_DXT23:
 		case CELL_GCM_TEXTURE_COMPRESSED_DXT45:
@@ -141,28 +140,25 @@ namespace
 		case CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
 			return { GL_ALPHA, GL_RED, GL_GREEN, GL_BLUE };
 
-		case CELL_GCM_TEXTURE_B8: 
-			return { GL_RED, GL_RED, GL_RED, GL_RED };
+		case CELL_GCM_TEXTURE_A4R4G4B4:
+			return { GL_BLUE, GL_GREEN, GL_RED, GL_ALPHA };
 
-		case CELL_GCM_TEXTURE_A4R4G4B4: 
-			return { GL_BLUE, GL_ALPHA, GL_RED, GL_GREEN };
+		case CELL_GCM_TEXTURE_B8:
+		case CELL_GCM_TEXTURE_X16:
+		case CELL_GCM_TEXTURE_X32_FLOAT:
+			return { GL_RED, GL_RED, GL_RED, GL_RED };
 
 		case CELL_GCM_TEXTURE_G8B8: 
 			return { GL_GREEN, GL_RED, GL_GREEN, GL_RED};
 
-		case CELL_GCM_TEXTURE_X16: 
-			return { GL_RED, GL_ONE, GL_RED, GL_ONE };
-
 		case CELL_GCM_TEXTURE_Y16_X16: 
 			return { GL_RED, GL_GREEN, GL_RED, GL_GREEN};
-
-		case CELL_GCM_TEXTURE_X32_FLOAT: 
-			return { GL_RED, GL_ONE, GL_ONE, GL_ONE };
 
 		case CELL_GCM_TEXTURE_Y16_X16_FLOAT: 
 			return { GL_GREEN, GL_RED, GL_GREEN, GL_RED };
 
 		case CELL_GCM_TEXTURE_W16_Z16_Y16_X16_FLOAT:
+		case CELL_GCM_TEXTURE_W32_Z32_Y32_X32_FLOAT:
 			return { GL_RED, GL_ALPHA, GL_BLUE, GL_GREEN };
 
 		case CELL_GCM_TEXTURE_D1R5G5B5:
@@ -178,7 +174,7 @@ namespace
 			return { GL_ZERO, GL_GREEN, GL_BLUE, GL_RED };
 
 		}
-		throw EXCEPTION("Unknown format %x", texture_format);
+		fmt::throw_exception("Unknown format 0x%x" HERE, texture_format);
 	}
 }
 
@@ -198,7 +194,7 @@ namespace rsx
 			case rsx::texture_minify_filter::linear_linear: return GL_LINEAR_MIPMAP_LINEAR;
 			case rsx::texture_minify_filter::convolution_min: return GL_LINEAR_MIPMAP_LINEAR;
 			}
-			throw EXCEPTION("Unknow min filter");
+			fmt::throw_exception("Unknow min filter" HERE);
 		}
 
 		int gl_tex_mag_filter(rsx::texture_magnify_filter mag_filter)
@@ -209,7 +205,7 @@ namespace rsx
 			case rsx::texture_magnify_filter::linear: return GL_LINEAR;
 			case rsx::texture_magnify_filter::convolution_mag: return GL_LINEAR;
 			}
-			throw EXCEPTION("Unknow mag filter");
+			fmt::throw_exception("Unknow mag filter" HERE);
 		}
 
 		static const int gl_tex_zfunc[] =
@@ -248,7 +244,7 @@ namespace rsx
 			case rsx::texture_wrap_mode::mirror_once_clamp: return GL_MIRROR_CLAMP_EXT;
 			}
 
-			LOG_ERROR(RSX, "Texture wrap error: bad wrap (%d).", wrap);
+			LOG_ERROR(RSX, "Texture wrap error: bad wrap (%d)", (u32)wrap);
 			return GL_REPEAT;
 		}
 
@@ -266,7 +262,7 @@ namespace rsx
 			case rsx::texture_max_anisotropy::x16: return 16.0f;
 			}
 
-			LOG_ERROR(RSX, "Texture anisotropy error: bad max aniso (%d).", aniso);
+			LOG_ERROR(RSX, "Texture anisotropy error: bad max aniso (%d)", (u32)aniso);
 			return 1.0f;
 		}
 
@@ -433,7 +429,7 @@ namespace rsx
 			return false;
 		}
 
-		void texture::init(int index, rsx::texture& tex)
+		void texture::init(int index, rsx::fragment_texture& tex)
 		{
 			switch (tex.dimension())
 			{
@@ -490,48 +486,60 @@ namespace rsx
 
 			const std::array<GLenum, 4>& glRemap = get_swizzle_remap(format);
 
+			glTexParameteri(m_target, GL_TEXTURE_BASE_LEVEL, 0);
 			glTexParameteri(m_target, GL_TEXTURE_MAX_LEVEL, tex.get_exact_mipmap_count() - 1);
 
-			if (format != CELL_GCM_TEXTURE_B8 && format != CELL_GCM_TEXTURE_X16 && format != CELL_GCM_TEXTURE_X32_FLOAT)
-			{
-				u8 remap_a = tex.remap() & 0x3;
-				u8 remap_r = (tex.remap() >> 2) & 0x3;
-				u8 remap_g = (tex.remap() >> 4) & 0x3;
-				u8 remap_b = (tex.remap() >> 6) & 0x3;
+			u8 remap_a = tex.remap() & 0x3;
+			u8 remap_r = (tex.remap() >> 2) & 0x3;
+			u8 remap_g = (tex.remap() >> 4) & 0x3;
+			u8 remap_b = (tex.remap() >> 6) & 0x3;
 
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_A, glRemap[remap_a]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_R, glRemap[remap_r]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_G, glRemap[remap_g]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_B, glRemap[remap_b]);
-			}
-			else
-			{
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_A, glRemap[0]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_R, glRemap[1]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_G, glRemap[2]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_B, glRemap[3]);
-			}
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_A, glRemap[remap_a]);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_R, glRemap[remap_r]);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_G, glRemap[remap_g]);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_B, glRemap[remap_b]);
 
 			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_S, gl_wrap(tex.wrap_s()));
 			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_T, gl_wrap(tex.wrap_t()));
 			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_R, gl_wrap(tex.wrap_r()));
 
-			__glcheck glTexParameterf(m_target, GL_TEXTURE_LOD_BIAS, tex.bias());
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_LOD, (tex.min_lod() >> 8));
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_MAX_LOD, (tex.max_lod() >> 8));
-
-			int min_filter = gl_tex_min_filter(tex.min_filter());
-			
-			if (min_filter != GL_LINEAR && min_filter != GL_NEAREST)
+			if (tex.get_exact_mipmap_count() <= 1 || m_target == GL_TEXTURE_RECTANGLE)
 			{
-				if (tex.get_exact_mipmap_count() <= 1 || m_target == GL_TEXTURE_RECTANGLE)
+				GLint min_filter = gl_tex_min_filter(tex.min_filter());
+				
+				if (min_filter != GL_LINEAR && min_filter != GL_NEAREST)
 				{
-					LOG_WARNING(RSX, "Texture %d, target 0x%X, requesting mipmap filtering without any mipmaps set!", m_id, m_target);
-					min_filter = GL_LINEAR;
+					LOG_WARNING(RSX, "Texture %d, target 0x%x, requesting mipmap filtering without any mipmaps set!", m_id, m_target);
+					
+					switch (min_filter)
+					{
+					case GL_NEAREST_MIPMAP_NEAREST:
+					case GL_NEAREST_MIPMAP_LINEAR:
+						min_filter = GL_NEAREST; break;
+					case GL_LINEAR_MIPMAP_NEAREST:
+					case GL_LINEAR_MIPMAP_LINEAR:
+						min_filter = GL_LINEAR; break;
+					default:
+						LOG_ERROR(RSX, "No mipmap fallback defined for rsx_min_filter = 0x%X", (u32)tex.min_filter());
+						min_filter = GL_NEAREST;
+					}
 				}
+
+				__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_FILTER, min_filter);
+
+				__glcheck glTexParameterf(m_target, GL_TEXTURE_LOD_BIAS, 0.);
+				__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_LOD, 0);
+				__glcheck glTexParameteri(m_target, GL_TEXTURE_MAX_LOD, 0);
+			}
+			else
+			{
+				__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_FILTER, gl_tex_min_filter(tex.min_filter()));
+
+				__glcheck glTexParameterf(m_target, GL_TEXTURE_LOD_BIAS, tex.bias());
+				__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_LOD, (tex.min_lod() >> 8));
+				__glcheck glTexParameteri(m_target, GL_TEXTURE_MAX_LOD, (tex.max_lod() >> 8));
 			}
 
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_FILTER, min_filter);
 			__glcheck glTexParameteri(m_target, GL_TEXTURE_MAG_FILTER, gl_tex_mag_filter(tex.mag_filter()));
 			__glcheck glTexParameterf(m_target, GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso(tex.max_aniso()));
 		}
@@ -595,50 +603,18 @@ namespace rsx
 
 			glTexParameteri(m_target, GL_TEXTURE_MAX_LEVEL, tex.get_exact_mipmap_count() - 1);
 
-			/*
-			if (format != CELL_GCM_TEXTURE_B8 && format != CELL_GCM_TEXTURE_X16 && format != CELL_GCM_TEXTURE_X32_FLOAT)
-			{
-				u8 remap_a = tex.remap() & 0x3;
-				u8 remap_r = (tex.remap() >> 2) & 0x3;
-				u8 remap_g = (tex.remap() >> 4) & 0x3;
-				u8 remap_b = (tex.remap() >> 6) & 0x3;
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_A, glRemap[0]);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_R, glRemap[1]);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_G, glRemap[2]);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_B, glRemap[3]);
 
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_A, glRemap[remap_a]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_R, glRemap[remap_r]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_G, glRemap[remap_g]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_B, glRemap[remap_b]);
-			}
-			else
-			{
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_A, glRemap[0]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_R, glRemap[1]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_G, glRemap[2]);
-				__glcheck glTexParameteri(m_target, GL_TEXTURE_SWIZZLE_B, glRemap[3]);
-			}
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_S, GL_REPEAT);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_R, GL_REPEAT);
 
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_S, gl_wrap(tex.wrap_s()));
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_T, gl_wrap(tex.wrap_t()));
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_WRAP_R, gl_wrap(tex.wrap_r()));
-			*/
-
-			__glcheck glTexParameterf(m_target, GL_TEXTURE_LOD_BIAS, tex.bias());
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_LOD, (tex.min_lod() >> 8));
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_MAX_LOD, (tex.max_lod() >> 8));
-
-			int min_filter = gl_tex_min_filter(tex.min_filter());
-
-			if (min_filter != GL_LINEAR && min_filter != GL_NEAREST)
-			{
-				if (tex.get_exact_mipmap_count() <= 1 || m_target == GL_TEXTURE_RECTANGLE)
-				{
-					LOG_WARNING(RSX, "Texture %d, target 0x%X, requesting mipmap filtering without any mipmaps set!", m_id, m_target);
-					min_filter = GL_LINEAR;
-				}
-			}
-
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_FILTER, min_filter);
-			__glcheck glTexParameteri(m_target, GL_TEXTURE_MAG_FILTER, gl_tex_mag_filter(tex.mag_filter()));
-			__glcheck glTexParameterf(m_target, GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso(tex.max_aniso()));
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			__glcheck glTexParameteri(m_target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			__glcheck glTexParameterf(m_target, GL_TEXTURE_MAX_ANISOTROPY_EXT, 1.f);
 		}
 
 		void texture::bind()

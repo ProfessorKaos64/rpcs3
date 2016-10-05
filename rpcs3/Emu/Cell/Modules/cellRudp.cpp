@@ -10,8 +10,8 @@ logs::channel cellRudp("cellRudp", logs::level::notice);
 struct rudp_t
 {
 	// allocator functions
-	std::function<vm::ptr<void>(PPUThread& ppu, u32 size)> malloc;
-	std::function<void(PPUThread& ppu, vm::ptr<void> ptr)> free;
+	std::function<vm::ptr<void>(ppu_thread& ppu, u32 size)> malloc;
+	std::function<void(ppu_thread& ppu, vm::ptr<void> ptr)> free;
 
 	// event handler function
 	vm::ptr<CellRudpEventHandler> handler = vm::null;
@@ -36,16 +36,16 @@ s32 cellRudpInit(vm::ptr<CellRudpAllocator> allocator)
 	}
 	else
 	{
-		rudp->malloc = [](PPUThread& ppu, u32 size)
+		rudp->malloc = [](ppu_thread& ppu, u32 size)
 		{
 			return vm::ptr<void>::make(vm::alloc(size, vm::main));
 		};
 
-		rudp->free = [](PPUThread& ppu, vm::ptr<void> ptr)
+		rudp->free = [](ppu_thread& ppu, vm::ptr<void> ptr)
 		{
 			if (!vm::dealloc(ptr.addr(), vm::main))
 			{
-				throw EXCEPTION("Memory deallocation failed (ptr=0x%x)", ptr);
+				fmt::throw_exception("Memory deallocation failed (ptr=0x%x)" HERE, ptr);
 			}
 		};
 	}

@@ -17,7 +17,8 @@ std::string ARMv7Thread::get_name() const
 
 std::string ARMv7Thread::dump() const
 {
-	std::string result = "Registers:\n=========\n";
+	std::string result = cpu_thread::dump();
+	result += "Registers:\n=========\n";
 	for(int i=0; i<15; ++i)
 	{
 		result += fmt::format("r%u\t= 0x%08x\n", i, GPR[i]);
@@ -32,33 +33,6 @@ std::string ARMv7Thread::dump() const
 		u32{ APSR.Q });
 	
 	return result;
-}
-
-void ARMv7Thread::cpu_init()
-{
-	if (!stack_addr)
-	{
-		if (!stack_size)
-		{
-			throw EXCEPTION("Invalid stack size");
-		}
-
-		stack_addr = vm::alloc(stack_size, vm::main);
-
-		if (!stack_addr)
-		{
-			throw EXCEPTION("Out of stack memory");
-		}
-	}
-
-	memset(GPR, 0, sizeof(GPR));
-	APSR.APSR = 0;
-	IPSR.IPSR = 0;
-	ISET = PC & 1 ? Thumb : ARM; // select instruction set
-	PC = PC & ~1; // and fix PC
-	ITSTATE.IT = 0;
-	SP = stack_addr + stack_size;
-	TLS = 0;
 }
 
 extern thread_local std::string(*g_tls_log_prefix)();
@@ -77,7 +51,7 @@ void ARMv7Thread::cpu_task_main()
 		return fmt::format("%s [0x%08x]", cpu->get_name(), cpu->PC);
 	};
 
-	while (!state.load() || !check_status())
+	while (!test(state) || !check_state())
 	{
 		if (ISET == Thumb)
 		{
@@ -106,7 +80,7 @@ void ARMv7Thread::cpu_task_main()
 		}
 		else
 		{
-			throw fmt::exception("Invalid instruction set" HERE);
+			fmt::throw_exception("Invalid instruction set" HERE);
 		}
 	}
 }
@@ -119,10 +93,20 @@ ARMv7Thread::~ARMv7Thread()
 	}
 }
 
-ARMv7Thread::ARMv7Thread(const std::string& name)
-	: cpu_thread(cpu_type::arm)
+ARMv7Thread::ARMv7Thread(const std::string& name, u32 prio, u32 stack)
+	: cpu_thread()
 	, m_name(name)
+	, prio(prio)
+	, stack_addr(vm::alloc(stack, vm::main))
+	, stack_size(stack)
 {
+	verify(HERE), stack_size, stack_addr;
+
+	std::memset(GPR, 0, sizeof(GPR));
+	APSR.APSR = 0;
+	IPSR.IPSR = 0;
+	ITSTATE.IT = 0;
+	SP = stack_addr + stack_size;
 }
 
 void ARMv7Thread::fast_call(u32 addr)
@@ -142,15 +126,15 @@ void ARMv7Thread::fast_call(u32 addr)
 	{
 		cpu_task_main();
 
-		if (SP != old_SP && !state.test(cpu_state::ret) && !state.test(cpu_state::exit)) // SP shouldn't change
+		if (SP != old_SP && !test(state, cpu_flag::ret + cpu_flag::exit)) // SP shouldn't change
 		{
-			throw fmt::exception("Stack inconsistency (addr=0x%x, SP=0x%x, old=0x%x)", addr, SP, old_SP);
+			fmt::throw_exception("Stack inconsistency (addr=0x%x, SP=0x%x, old=0x%x)", addr, SP, old_SP);
 		}
 	}
-	catch (cpu_state _s)
+	catch (cpu_flag _s)
 	{
 		state += _s;
-		if (_s != cpu_state::ret) throw;
+		if (_s != cpu_flag::ret) throw;
 	}
 	catch (EmulationStopped)
 	{
@@ -165,11 +149,54 @@ void ARMv7Thread::fast_call(u32 addr)
 		throw;
 	}
 
-	state -= cpu_state::ret;
+	state -= cpu_flag::ret;
 
 	PC = old_PC;
 	SP = old_SP;
 	LR = old_LR;
 	custom_task = std::move(old_task);
 	last_function = old_func;
+}
+
+u32 ARMv7Thread::stack_push(u32 size, u32 align_v)
+{
+	if (auto cpu = get_current_cpu_thread())
+	{
+		ARMv7Thread& context = static_cast<ARMv7Thread&>(*cpu);
+
+		const u32 old_pos = context.SP;
+		context.SP -= align(size + 4, 4); // room minimal possible size
+		context.SP &= ~(align_v - 1); // fix stack alignment
+
+		if (context.SP < context.stack_addr)
+		{
+			fmt::throw_exception("Stack overflow (size=0x%x, align=0x%x, SP=0x%x, stack=*0x%x)" HERE, size, align_v, context.SP, context.stack_addr);
+		}
+		else
+		{
+			vm::psv::_ref<nse_t<u32>>(context.SP + size) = old_pos;
+			return context.SP;
+		}
+	}
+
+	fmt::throw_exception("Invalid thread" HERE);
+}
+
+void ARMv7Thread::stack_pop_verbose(u32 addr, u32 size) noexcept
+{
+	if (auto cpu = get_current_cpu_thread())
+	{
+		ARMv7Thread& context = static_cast<ARMv7Thread&>(*cpu);
+
+		if (context.SP != addr)
+		{
+			LOG_ERROR(ARMv7, "Stack inconsistency (addr=0x%x, SP=0x%x, size=0x%x)", addr, context.SP, size);
+			return;
+		}
+
+		context.SP = vm::psv::_ref<nse_t<u32>>(context.SP + size);
+		return;
+	}
+
+	LOG_ERROR(ARMv7, "Invalid thread" HERE);
 }

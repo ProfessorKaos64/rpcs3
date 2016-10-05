@@ -106,7 +106,7 @@ void VKVertexDecompilerThread::insertConstants(std::stringstream & OS, const std
 	OS << "layout(std140, set=0, binding = 1) uniform VertexConstantsBuffer" << std::endl;
 	OS << "{" << std::endl;
 	OS << "	vec4 vc[468];" << std::endl;
-	OS << "};" << std::endl;
+	OS << "};" << std::endl << std::endl;
 
 	vk::glsl::program_input in;
 	in.location = 1;
@@ -115,6 +115,33 @@ void VKVertexDecompilerThread::insertConstants(std::stringstream & OS, const std
 	in.type = vk::glsl::input_type_uniform_buffer;
 
 	inputs.push_back(in);
+
+	//We offset this value by the index of the first fragment texture (19) below
+	//and allow 16 fragment textures to precede this slot
+	int location = 16;
+
+	for (const ParamType &PT : constants)
+	{
+		for (const ParamItem &PI : PT.items)
+		{
+			if (PI.name == "vc[468]")
+				continue;
+
+			if (PT.type == "sampler2D" ||
+				PT.type == "samplerCube" ||
+				PT.type == "sampler1D" ||
+				PT.type == "sampler3D")
+			{
+				in.location = location;
+				in.name = PI.name;
+				in.type = vk::glsl::input_type_texture;
+
+				inputs.push_back(in);
+
+				OS << "layout(set = 0, binding=" << 19 + location++ << ") uniform " << PT.type << " " << PI.name << ";" << std::endl;
+			}
+		}
+	}
 }
 
 struct reg_info
@@ -196,13 +223,9 @@ namespace vk
 			if (real_input.location != PI.location)
 				continue;
 
-			std::string vecType = "	vec4 ";
-			if (real_input.int_type)
-				vecType = "	ivec4 ";
-
 			if (!real_input.is_array)
 			{
-				OS << vecType << PI.name << " = texelFetch(" << PI.name << "_buffer, 0);" << std::endl;
+				OS << "	vec4 " << PI.name << " = vec4(texelFetch(" << PI.name << "_buffer, 0));" << std::endl;
 				return;
 			}
 
@@ -210,19 +233,19 @@ namespace vk
 			{
 				if (real_input.is_modulo)
 				{
-					OS << vecType << PI.name << "= texelFetch(" << PI.name << "_buffer, gl_VertexIndex %" << real_input.frequency << ");" << std::endl;
+					OS << "	vec4 " << PI.name << "= vec4(texelFetch(" << PI.name << "_buffer, gl_VertexIndex %" << real_input.frequency << "));" << std::endl;
 					return;
 				}
 
-				OS << vecType << PI.name << "= texelFetch(" << PI.name << "_buffer, gl_VertexIndex /" << real_input.frequency << ");" << std::endl;
+				OS << "	vec4 " << PI.name << "= vec4(texelFetch(" << PI.name << "_buffer, gl_VertexIndex /" << real_input.frequency << "));" << std::endl;
 				return;
 			}
 
-			OS << vecType << PI.name << "= texelFetch(" << PI.name << "_buffer, gl_VertexIndex).rgba;" << std::endl;
+			OS << "	vec4 " << PI.name << "= vec4(texelFetch(" << PI.name << "_buffer, gl_VertexIndex).rgba);" << std::endl;
 			return;
 		}
 
-		OS << "	vec4 " << PI.name << "= texelFetch(" << PI.name << "_buffer, gl_VertexIndex).rgba;" << std::endl;
+		OS << "	vec4 " << PI.name << "= vec4(texelFetch(" << PI.name << "_buffer, gl_VertexIndex).rgba);" << std::endl;
 	}
 }
 
@@ -230,17 +253,34 @@ void VKVertexDecompilerThread::insertMainStart(std::stringstream & OS)
 {
 	vk::insert_glsl_legacy_function(OS);
 
-	OS << "void main()" << std::endl;
+	std::string parameters = "";
+	for (int i = 0; i < 16; ++i)
+	{
+		std::string reg_name = "dst_reg" + std::to_string(i);
+		if (m_parr.HasParam(PF_PARAM_NONE, "vec4", reg_name))
+		{
+			if (parameters.length())
+				parameters += ", ";
+
+			parameters += "inout vec4 " + reg_name;
+		}
+	}
+
+	OS << "void vs_main(" << parameters << ")" << std::endl;
 	OS << "{" << std::endl;
 
-	// Declare inside main function
+	//Declare temporary registers, ignoring those mapped to outputs
 	for (const ParamType PT : m_parr.params[PF_PARAM_NONE])
 	{
 		for (const ParamItem &PI : PT.items)
 		{
+			if (PI.name.substr(0, 7) == "dst_reg")
+				continue;
+
 			OS << "	" << PT.type << " " << PI.name;
 			if (!PI.value.empty())
 				OS << " = " << PI.value;
+
 			OS << ";" << std::endl;
 		}
 	}
@@ -254,6 +294,39 @@ void VKVertexDecompilerThread::insertMainStart(std::stringstream & OS)
 
 void VKVertexDecompilerThread::insertMainEnd(std::stringstream & OS)
 {
+	OS << "}" << std::endl << std::endl;
+
+	OS << "void main ()" << std::endl;
+	OS << "{" << std::endl;
+
+	std::string parameters = "";
+
+	if (ParamType *vec4Types = m_parr.SearchParam(PF_PARAM_NONE, "vec4"))
+	{
+		for (int i = 0; i < 16; ++i)
+		{
+			std::string reg_name = "dst_reg" + std::to_string(i);
+			for (auto &PI : vec4Types->items)
+			{
+				if (reg_name == PI.name)
+				{
+					if (parameters.length())
+						parameters += ", ";
+
+					parameters += reg_name;
+					OS << "	vec4 " << reg_name;
+
+					if (!PI.value.empty())
+						OS << "= " << PI.value;
+
+					OS << ";" << std::endl;
+				}
+			}
+		}
+	}
+
+	OS << std::endl << "	vs_main(" << parameters << ");" << std::endl << std::endl;
+
 	bool insert_front_diffuse = (rsx_vertex_program.output_mask & 1);
 	bool insert_front_specular = (rsx_vertex_program.output_mask & 2);
 
@@ -264,7 +337,7 @@ void VKVertexDecompilerThread::insertMainEnd(std::stringstream & OS)
 	{
 		if (m_parr.HasParam(PF_PARAM_NONE, "vec4", i.src_reg))
 		{
-			if (i.name == "front_spec_color")
+			if (i.name == "front_diff_color")
 				insert_front_diffuse = false;
 
 			if (i.name == "front_spec_color")
@@ -310,11 +383,12 @@ void VKVertexProgram::Decompile(const RSXVertexProgram& prog)
 
 void VKVertexProgram::Compile()
 {
+	fs::create_path(fs::get_config_dir() + "/shaderlog");
 	fs::file(fs::get_config_dir() + "shaderlog/VertexProgram.spirv", fs::rewrite).write(shader);
 
 	std::vector<u32> spir_v;
 	if (!vk::compile_glsl_to_spv(shader, vk::glsl::glsl_vertex_program, spir_v))
-		throw EXCEPTION("Failed to compile vertex shader");
+		fmt::throw_exception("Failed to compile vertex shader" HERE);
 
 	VkShaderModuleCreateInfo vs_info;
 	vs_info.codeSize = spir_v.size() * sizeof(u32);
@@ -335,15 +409,8 @@ void VKVertexProgram::Delete()
 
 	if (handle)
 	{
-		if (Emu.IsStopped())
-		{
-			LOG_WARNING(RSX, "VKVertexProgram::Delete(): vkDestroyShaderModule(0x%X) avoided", handle);
-		}
-		else
-		{
-			VkDevice dev = (VkDevice)*vk::get_current_renderer();
-			vkDestroyShaderModule(dev, handle, nullptr);
-		}
+		VkDevice dev = (VkDevice)*vk::get_current_renderer();
+		vkDestroyShaderModule(dev, handle, nullptr);
 
 		handle = nullptr;
 	}

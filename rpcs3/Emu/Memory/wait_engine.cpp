@@ -16,7 +16,7 @@ namespace vm
 
 	void waiter_base::initialize(u32 addr, u32 size)
 	{
-		EXPECTS(addr && (size & (~size + 1)) == size && (addr & (size - 1)) == 0);
+		verify(HERE), addr, (size & (~size + 1)) == size, (addr & (size - 1)) == 0;
 
 		this->addr = addr;
 		this->mask = ~(size - 1);
@@ -49,7 +49,7 @@ namespace vm
 		};
 
 		// Wait until thread == nullptr
-		waiter{this}, thread_ctrl::wait(WRAP_EXPR(!thread || test()));
+		waiter{this}, thread_ctrl::wait([&] { return !thread || test(); });
 	}
 
 	bool waiter_base::try_notify()

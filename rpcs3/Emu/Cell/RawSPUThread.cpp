@@ -24,16 +24,15 @@ void RawSPUThread::cpu_task()
 	npc = pc | ((ch_event_stat & SPU_EVENT_INTR_ENABLED) != 0);
 }
 
-void RawSPUThread::on_init()
+void RawSPUThread::on_init(const std::shared_ptr<void>& _this)
 {
 	if (!offset)
 	{
 		// Install correct SPU index and LS address
 		const_cast<u32&>(index) = id;
-		const_cast<u32&>(offset) = vm::falloc(RAW_SPU_BASE_ADDR + RAW_SPU_OFFSET * index, 0x40000);
-		VERIFY(offset);
+		const_cast<u32&>(offset) = verify(HERE, vm::falloc(RAW_SPU_BASE_ADDR + RAW_SPU_OFFSET * index, 0x40000));
 
-		SPUThread::on_init();
+		SPUThread::on_init(_this);
 	}
 }
 
@@ -87,21 +86,9 @@ bool RawSPUThread::write_reg(const u32 addr, const u32 value)
 {
 	auto try_start = [this]()
 	{
-		if (status.atomic_op([](u32& status) -> bool
+		if (!status.test_and_set(SPU_STATUS_RUNNING))
 		{
-			if (status & SPU_STATUS_RUNNING)
-			{
-				return false;
-			}
-			else
-			{
-				status = SPU_STATUS_RUNNING;
-				return true;
-			}
-		}))
-		{
-			state -= cpu_state::stop;
-			(*this)->lock_notify();
+			run();
 		}
 	};
 
@@ -195,7 +182,7 @@ bool RawSPUThread::write_reg(const u32 addr, const u32 value)
 		else if (value == SPU_RUNCNTL_STOP_REQUEST)
 		{
 			status &= ~SPU_STATUS_RUNNING;
-			state += cpu_state::stop;
+			state += cpu_flag::stop;
 		}
 		else
 		{

@@ -297,8 +297,10 @@ void RSXDebugger::OnScrollMemory(wxMouseEvent& event)
 			if(vm::check_addr(m_addr))
 			{
 				u32 cmd = vm::ps3::read32(m_addr);
-				u32 count = (cmd & (CELL_GCM_METHOD_FLAG_JUMP | CELL_GCM_METHOD_FLAG_CALL))
-					|| cmd == CELL_GCM_METHOD_FLAG_RETURN ? 0 : (cmd >> 18) & 0x7ff;
+				u32 count = ((cmd & RSX_METHOD_OLD_JUMP_CMD_MASK) == RSX_METHOD_OLD_JUMP_CMD)
+					|| ((cmd & RSX_METHOD_NEW_JUMP_CMD_MASK) == RSX_METHOD_NEW_JUMP_CMD)
+					|| ((cmd & RSX_METHOD_CALL_CMD_MASK) == RSX_METHOD_CALL_CMD)
+					|| cmd == RSX_METHOD_RETURN_CMD ? 0 : (cmd >> 18) & 0x7ff;
 
 				offset = 1 + count;
 			}
@@ -435,7 +437,7 @@ namespace
 		case rsx::surface_color_format::x1r5g5b5_o1r5g5b5:
 		case rsx::surface_color_format::x1r5g5b5_z1r5g5b5:
 		case rsx::surface_color_format::w32z32y32x32:
-			throw EXCEPTION("Unsupported format for display");
+			fmt::throw_exception("Unsupported format for display" HERE);
 		}
 	}
 
@@ -471,14 +473,14 @@ void RSXDebugger::OnClickDrawCalls(wxMouseEvent& event)
 		p_buffer_colorD,
 	};
 
-	size_t width = draw_call.width;
-	size_t height = draw_call.height;
+	size_t width = draw_call.state.surface_clip_width();
+	size_t height = draw_call.state.surface_clip_height();
 
 	for (size_t i = 0; i < 4; i++)
 	{
 		if (width && height && !draw_call.color_buffer[i].empty())
 		{
-			buffer_img[i] = wxImage(width, height, convert_to_wximage_buffer(draw_call.color_format, draw_call.color_buffer[i], width, height));
+			buffer_img[i] = wxImage(width, height, convert_to_wximage_buffer(draw_call.state.surface_color(), draw_call.color_buffer[i], width, height));
 			wxClientDC dc_canvas(p_buffers[i]);
 
 			if (buffer_img[i].IsOk())
@@ -493,7 +495,7 @@ void RSXDebugger::OnClickDrawCalls(wxMouseEvent& event)
 			gsl::span<const gsl::byte> orig_buffer = draw_call.depth_stencil[0];
 			unsigned char *buffer = (unsigned char *)malloc(width * height * 3);
 
-			if (draw_call.depth_format == rsx::surface_depth_format::z24s8)
+			if (draw_call.state.surface_depth_fmt() == rsx::surface_depth_format::z24s8)
 			{
 				for (u32 row = 0; row < height; row++)
 				{
@@ -564,7 +566,7 @@ void RSXDebugger::OnClickDrawCalls(wxMouseEvent& event)
 
 	m_list_index_buffer->ClearAll();
 	m_list_index_buffer->InsertColumn(0, "Index", 0, 700);
-	if (frame_debug.draw_calls[draw_id].index_type == rsx::index_array_type::u16)
+	if (frame_debug.draw_calls[draw_id].state.index_type() == rsx::index_array_type::u16)
 	{
 		u16 *index_buffer = (u16*)frame_debug.draw_calls[draw_id].index.data();
 		for (u32 i = 0; i < frame_debug.draw_calls[draw_id].vertex_count; ++i)
@@ -572,7 +574,7 @@ void RSXDebugger::OnClickDrawCalls(wxMouseEvent& event)
 			m_list_index_buffer->InsertItem(i, std::to_string(index_buffer[i]));
 		}
 	}
-	if (frame_debug.draw_calls[draw_id].index_type == rsx::index_array_type::u32)
+	if (frame_debug.draw_calls[draw_id].state.index_type() == rsx::index_array_type::u32)
 	{
 		u32 *index_buffer = (u32*)frame_debug.draw_calls[draw_id].index.data();
 		for (u32 i = 0; i < frame_debug.draw_calls[draw_id].vertex_count; ++i)
@@ -642,7 +644,10 @@ void RSXDebugger::GetMemory()
 			m_list_commands->SetItem(i, 3, wxString::Format("%d", count));
 			m_list_commands->SetItem(i, 2, DisAsmCommand(cmd, count, addr, 0));
 
-			if(!(cmd & (CELL_GCM_METHOD_FLAG_JUMP | CELL_GCM_METHOD_FLAG_CALL)) && cmd != CELL_GCM_METHOD_FLAG_RETURN)
+			if((cmd & RSX_METHOD_OLD_JUMP_CMD_MASK) != RSX_METHOD_OLD_JUMP_CMD
+				&& (cmd & RSX_METHOD_NEW_JUMP_CMD_MASK) != RSX_METHOD_NEW_JUMP_CMD
+				&& (cmd & RSX_METHOD_CALL_CMD_MASK) != RSX_METHOD_CALL_CMD
+				&& cmd != RSX_METHOD_RETURN_CMD)
 			{
 				addr += 4 * count;
 			}
@@ -1092,17 +1097,22 @@ wxString RSXDebugger::DisAsmCommand(u32 cmd, u32 count, u32 currentAddr, u32 ioA
 	wxString disasm = wxEmptyString;
 
 #define DISASM(string, ...) { if(disasm.IsEmpty()) disasm = wxString::Format((string), ##__VA_ARGS__); else disasm += (wxString(' ') + wxString::Format((string), ##__VA_ARGS__)); }
-	if(cmd & CELL_GCM_METHOD_FLAG_JUMP)
+	if((cmd & RSX_METHOD_OLD_JUMP_CMD_MASK) == RSX_METHOD_OLD_JUMP_CMD)
 	{
-		u32 jumpAddr = cmd & ~(CELL_GCM_METHOD_FLAG_JUMP | CELL_GCM_METHOD_FLAG_NON_INCREMENT);
+		u32 jumpAddr = cmd & RSX_METHOD_OLD_JUMP_OFFSET_MASK;
 		DISASM("JUMP: %08x -> %08x", currentAddr, ioAddr+jumpAddr);
 	}
-	else if(cmd & CELL_GCM_METHOD_FLAG_CALL)
+	else if((cmd & RSX_METHOD_NEW_JUMP_CMD_MASK) == RSX_METHOD_NEW_JUMP_CMD)
 	{
-		u32 callAddr = cmd & ~CELL_GCM_METHOD_FLAG_CALL;
+		u32 jumpAddr = cmd & RSX_METHOD_NEW_JUMP_OFFSET_MASK;
+		DISASM("JUMP: %08x -> %08x", currentAddr, ioAddr + jumpAddr);
+	}
+	else if((cmd & RSX_METHOD_CALL_CMD_MASK) == RSX_METHOD_CALL_CMD)
+	{
+		u32 callAddr = cmd & RSX_METHOD_CALL_OFFSET_MASK;
 		DISASM("CALL: %08x -> %08x", currentAddr, ioAddr+callAddr);
 	}
-	if(cmd == CELL_GCM_METHOD_FLAG_RETURN)
+	if(cmd == RSX_METHOD_RETURN_CMD)
 	{
 		DISASM("RETURN");
 	}
@@ -1111,7 +1121,10 @@ wxString RSXDebugger::DisAsmCommand(u32 cmd, u32 count, u32 currentAddr, u32 ioA
 	{
 		DISASM("Null cmd");
 	}
-	else if(!(cmd & (CELL_GCM_METHOD_FLAG_JUMP | CELL_GCM_METHOD_FLAG_CALL)) && cmd != CELL_GCM_METHOD_FLAG_RETURN)
+	else if ((cmd & RSX_METHOD_OLD_JUMP_CMD_MASK) != RSX_METHOD_OLD_JUMP_CMD
+		&& (cmd & RSX_METHOD_NEW_JUMP_CMD_MASK) != RSX_METHOD_NEW_JUMP_CMD
+		&& (cmd & RSX_METHOD_CALL_CMD_MASK) != RSX_METHOD_CALL_CMD
+		&& cmd != RSX_METHOD_RETURN_CMD)
 	{
 		auto args = vm::ps3::ptr<u32>::make(currentAddr + 4);
 
@@ -1147,7 +1160,7 @@ wxString RSXDebugger::DisAsmCommand(u32 cmd, u32 count, u32 currentAddr, u32 ioA
 		}
 		}
 
-		if(cmd & CELL_GCM_METHOD_FLAG_NON_INCREMENT)
+		if((cmd & RSX_METHOD_NON_INCREMENT_CMD_MASK) == RSX_METHOD_NON_INCREMENT_CMD)
 		{
 			DISASM("Non Increment cmd");
 		}

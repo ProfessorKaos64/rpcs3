@@ -46,7 +46,7 @@ color_format rsx::internals::surface_color_format_to_gl(rsx::surface_color_forma
 
 	case rsx::surface_color_format::a8b8g8r8:
 	default:
-		LOG_ERROR(RSX, "Surface color buffer: Unsupported surface color format (0x%x)", color_format);
+		LOG_ERROR(RSX, "Surface color buffer: Unsupported surface color format (0x%x)", (u32)color_format);
 		return{ ::gl::texture::type::uint_8_8_8_8, ::gl::texture::format::bgra, false, 4, 1 };
 	}
 }
@@ -59,7 +59,7 @@ depth_format rsx::internals::surface_depth_format_to_gl(rsx::surface_depth_forma
 		return{ ::gl::texture::type::ushort, ::gl::texture::format::depth, ::gl::texture::internal_format::depth16 };
 
 	default:
-		LOG_ERROR(RSX, "Surface depth buffer: Unsupported surface depth format (0x%x)", depth_format);
+		LOG_ERROR(RSX, "Surface depth buffer: Unsupported surface depth format (0x%x)", (u32)depth_format);
 	case rsx::surface_depth_format::z24s8:
 		return{ ::gl::texture::type::uint_24_8, ::gl::texture::format::depth_stencil, ::gl::texture::internal_format::depth24_stencil8 };
 	}
@@ -72,7 +72,7 @@ u8 rsx::internals::get_pixel_size(rsx::surface_depth_format format)
 	case rsx::surface_depth_format::z16: return 2;
 	case rsx::surface_depth_format::z24s8: return 4;
 	}
-	throw EXCEPTION("Unknown depth format");
+	fmt::throw_exception("Unknown depth format" HERE);
 }
 
 
@@ -204,7 +204,7 @@ void GLGSRender::read_buffers()
 
 	if (g_cfg_rsx_read_color_buffers)
 	{
-		auto color_format = rsx::internals::surface_color_format_to_gl(m_surface.color_format);
+		auto color_format = rsx::internals::surface_color_format_to_gl(rsx::method_registers.surface_color());
 
 		auto read_color_buffers = [&](int index, int count)
 		{
@@ -293,16 +293,16 @@ void GLGSRender::read_buffers()
 
 		//Read failed. Fall back to slow s/w path...
 
-		auto depth_format = rsx::internals::surface_depth_format_to_gl(m_surface.depth_format);
-		int pixel_size = rsx::internals::get_pixel_size(m_surface.depth_format);
+		auto depth_format = rsx::internals::surface_depth_format_to_gl(rsx::method_registers.surface_depth_fmt());
+		int pixel_size    = rsx::internals::get_pixel_size(rsx::method_registers.surface_depth_fmt());
 		gl::buffer pbo_depth;
 
-		__glcheck pbo_depth.create(m_surface.width * m_surface.height * pixel_size);
+		__glcheck pbo_depth.create(rsx::method_registers.surface_clip_width() * rsx::method_registers.surface_clip_height() * pixel_size);
 		__glcheck pbo_depth.map([&](GLubyte* pixels)
 		{
 			u32 depth_address = rsx::get_address(rsx::method_registers.surface_z_offset(), rsx::method_registers.surface_z_dma());
 
-			if (m_surface.depth_format == rsx::surface_depth_format::z16)
+			if (rsx::method_registers.surface_depth_fmt() == rsx::surface_depth_format::z16)
 			{
 				u16 *dst = (u16*)pixels;
 				const be_t<u16>* src = vm::ps3::_ptr<u16>(depth_address);
@@ -336,7 +336,7 @@ void GLGSRender::write_buffers()
 
 	if (g_cfg_rsx_write_color_buffers)
 	{
-		auto color_format = rsx::internals::surface_color_format_to_gl(m_surface.color_format);
+		auto color_format = rsx::internals::surface_color_format_to_gl(rsx::method_registers.surface_color());
 
 		auto write_color_buffers = [&](int index, int count)
 		{
@@ -404,11 +404,11 @@ void GLGSRender::write_buffers()
 		if (pitch <= 64)
 			return;
 
-		auto depth_format = rsx::internals::surface_depth_format_to_gl(m_surface.depth_format);
+		auto depth_format = rsx::internals::surface_depth_format_to_gl(rsx::method_registers.surface_depth_fmt());
 		u32 depth_address = rsx::get_address(rsx::method_registers.surface_z_offset(), rsx::method_registers.surface_z_dma());
 		u32 range = std::get<1>(m_rtts.m_bound_depth_stencil)->width() * std::get<1>(m_rtts.m_bound_depth_stencil)->height() * 2;
 
-		if (m_surface.depth_format != rsx::surface_depth_format::z16) range *= 2;
+		if (rsx::method_registers.surface_depth_fmt() != rsx::surface_depth_format::z16) range *= 2;
 
 		m_gl_texture_cache.save_render_target(depth_address, range, (*std::get<1>(m_rtts.m_bound_depth_stencil)));
 	}

@@ -39,7 +39,7 @@ s32 sys_lwmutex_create(vm::ptr<sys_lwmutex_t> lwmutex, vm::ptr<sys_lwmutex_attri
 	return CELL_OK;
 }
 
-s32 sys_lwmutex_destroy(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
+s32 sys_lwmutex_destroy(ppu_thread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
 {
 	sysPrxForUser.trace("sys_lwmutex_destroy(lwmutex=*0x%x)", lwmutex);
 
@@ -70,7 +70,7 @@ s32 sys_lwmutex_destroy(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
 	return CELL_OK;
 }
 
-s32 sys_lwmutex_lock(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex, u64 timeout)
+s32 sys_lwmutex_lock(ppu_thread& ppu, vm::ptr<sys_lwmutex_t> lwmutex, u64 timeout)
 {
 	sysPrxForUser.trace("sys_lwmutex_lock(lwmutex=*0x%x, timeout=0x%llx)", lwmutex, timeout);
 
@@ -149,7 +149,7 @@ s32 sys_lwmutex_lock(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex, u64 timeout
 
 		if (old != lwmutex_reserved)
 		{
-			throw EXCEPTION("Locking failed (lwmutex=*0x%x, owner=0x%x)", lwmutex, old);
+			fmt::throw_exception("Locking failed (lwmutex=*0x%x, owner=0x%x)" HERE, lwmutex, old);
 		}
 
 		return CELL_OK;
@@ -158,13 +158,13 @@ s32 sys_lwmutex_lock(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex, u64 timeout
 	if (res == CELL_EBUSY && lwmutex->attribute & SYS_SYNC_RETRY)
 	{
 		// TODO (protocol is ignored in current implementation)
-		throw EXCEPTION("");
+		fmt::throw_exception("Unimplemented" HERE);
 	}
 
 	return res;
 }
 
-s32 sys_lwmutex_trylock(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
+s32 sys_lwmutex_trylock(ppu_thread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
 {
 	sysPrxForUser.trace("sys_lwmutex_trylock(lwmutex=*0x%x)", lwmutex);
 
@@ -220,7 +220,7 @@ s32 sys_lwmutex_trylock(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
 
 			if (old != lwmutex_reserved)
 			{
-				throw EXCEPTION("Locking failed (lwmutex=*0x%x, owner=0x%x)", lwmutex, old);
+				fmt::throw_exception("Locking failed (lwmutex=*0x%x, owner=0x%x)" HERE, lwmutex, old);
 			}
 		}
 
@@ -231,7 +231,7 @@ s32 sys_lwmutex_trylock(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
 	return CELL_EBUSY;
 }
 
-s32 sys_lwmutex_unlock(PPUThread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
+s32 sys_lwmutex_unlock(ppu_thread& ppu, vm::ptr<sys_lwmutex_t> lwmutex)
 {
 	sysPrxForUser.trace("sys_lwmutex_unlock(lwmutex=*0x%x)", lwmutex);
 

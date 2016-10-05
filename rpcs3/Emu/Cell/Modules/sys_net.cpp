@@ -8,6 +8,7 @@
 #include <winsock2.h>
 #include <WS2tcpip.h>
 #else
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -146,7 +147,7 @@ namespace sys_net
 	// TODO
 	thread_local vm::ptr<_tls_data_t> g_tls_net_data{};
 
-	static never_inline void initialize_tls()
+	static NEVER_INLINE void initialize_tls()
 	{
 		// allocate if not initialized
 		if (!g_tls_net_data)
@@ -198,7 +199,7 @@ namespace sys_net
 
 		if (name && result != SYS_NET_EWOULDBLOCK)
 		{
-			ppu_error_code::report(result, name);
+			libnet.error("Socket error %s", name);
 		}
 
 		return result;
@@ -323,7 +324,7 @@ namespace sys_net
 
 	u32 inet_addr(vm::cptr<char> cp)
 	{
-		libnet.warning("inet_addr(cp=*0x%x)", cp);
+		libnet.warning("inet_addr(cp=%s)", cp);
 		return htonl(::inet_addr(cp.get_ptr())); // return a big-endian IP address (WTF? function should return LITTLE-ENDIAN value)
 	}
 
@@ -373,7 +374,7 @@ namespace sys_net
 
 	vm::cptr<char> inet_ntop(s32 af, vm::ptr<void> src, vm::ptr<char> dst, u32 size)
 	{
-		libnet.warning("inet_ntop(af=%d, src=*0x%x, dst=*0x%x, size=%d)", af, src, dst, size);
+		libnet.warning("inet_ntop(af=%d, src=%s, dst=*0x%x, size=%d)", af, src, dst, size);
 		const char* result = ::inet_ntop(af, src.get_ptr(), dst.get_ptr(), size);
 
 		if (result == nullptr)
@@ -386,7 +387,7 @@ namespace sys_net
 
 	s32 inet_pton(s32 af, vm::cptr<char> src, vm::ptr<char> dst)
 	{
-		libnet.warning("inet_pton(af=%d, src=*0x%x, dst=*0x%x)", af, src, dst);
+		libnet.warning("inet_pton(af=%d, src=%s, dst=*0x%x)", af, src, dst);
 		return ::inet_pton(af, src.get_ptr(), dst.get_ptr());
 	}
 
@@ -498,7 +499,7 @@ namespace sys_net
 
 		if (level != SOL_SOCKET && level != IPPROTO_TCP)
 		{
-			throw EXCEPTION("Invalid socket option level!");
+			fmt::throw_exception("Invalid socket option level!" HERE);
 		}
 
 		s32 ret;
@@ -597,7 +598,7 @@ namespace sys_net
 
 				if (flags < 0)
 				{
-					throw EXCEPTION("Failed to obtain socket flags.");
+					fmt::throw_exception("Failed to obtain socket flags." HERE);
 				}
 
 				u32 mode = *(u32*)optval.get_ptr();

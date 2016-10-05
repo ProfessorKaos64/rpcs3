@@ -32,6 +32,7 @@ namespace vk
 		std::vector<cached_texture_object> m_cache;
 		std::pair<u64, u64> texture_cache_range = std::make_pair(0xFFFFFFFF, 0);
 		std::vector<std::unique_ptr<vk::image_view> > m_temporary_image_view;
+		std::vector<std::unique_ptr<vk::image>> m_dirty_textures;
 
 		bool lock_memory_region(u32 start, u32 size)
 		{
@@ -99,7 +100,7 @@ namespace vk
 				{
 					if (tex.exists)
 					{
-						tex.uploaded_texture.reset();
+						m_dirty_textures.push_back(std::move(tex.uploaded_texture));
 						tex.exists = false;
 					}
 
@@ -133,16 +134,32 @@ namespace vk
 			unlock_memory_region(static_cast<u32>(obj.protected_rgn_start), static_cast<u32>(obj.native_rsx_size));
 		}
 
-		void purge_dirty_textures()
+		void purge_cache()
 		{
 			for (cached_texture_object &tex : m_cache)
 			{
-				if (tex.dirty && tex.exists)
-				{
-					tex.uploaded_texture.reset();
-					tex.exists = false;
-				}
+				if (tex.exists)
+					m_dirty_textures.push_back(std::move(tex.uploaded_texture));
+
+				if (tex.locked)
+					unlock_object(tex);
 			}
+
+			m_temporary_image_view.clear();
+			m_dirty_textures.clear();
+
+			m_cache.resize(0);
+		}
+
+		//Helpers
+		VkComponentMapping get_component_map(rsx::fragment_texture &tex, u32 gcm_format)
+		{
+			return vk::get_component_mapping(gcm_format, tex.remap());
+		}
+
+		VkComponentMapping get_component_map(rsx::vertex_texture &tex, u32 gcm_format)
+		{
+			return vk::get_component_mapping(gcm_format, (0 | 1 << 2 | 2 << 4 | 3 << 6));
 		}
 
 	public:
@@ -152,10 +169,11 @@ namespace vk
 
 		void destroy()
 		{
-			m_cache.resize(0);
+			purge_cache();
 		}
 
-		vk::image_view* upload_texture(command_buffer cmd, rsx::texture &tex, rsx::vk_render_targets &m_rtts, const vk::memory_type_mapping &memory_type_mapping, vk_data_heap& upload_heap, vk::buffer* upload_buffer)
+		template <typename RsxTextureType>
+		vk::image_view* upload_texture(command_buffer cmd, RsxTextureType &tex, rsx::vk_render_targets &m_rtts, const vk::memory_type_mapping &memory_type_mapping, vk_data_heap& upload_heap, vk::buffer* upload_buffer)
 		{
 			const u32 texaddr = rsx::get_address(tex.offset(), tex.location());
 			const u32 range = (u32)get_texture_size(tex);
@@ -173,7 +191,7 @@ namespace vk
 			if (rtt_texture = m_rtts.get_texture_from_depth_stencil_if_applicable(texaddr))
 			{
 				m_temporary_image_view.push_back(std::make_unique<vk::image_view>(*vk::get_current_renderer(), rtt_texture->value, VK_IMAGE_VIEW_TYPE_2D, rtt_texture->info.format,
-					vk::default_component_map(),
+					rtt_texture->native_layout,
 					vk::get_image_subresource_range(0, 0, 1, 1, VK_IMAGE_ASPECT_DEPTH_BIT)));
 				return m_temporary_image_view.back().get();
 			}
@@ -187,14 +205,14 @@ namespace vk
 			u32 raw_format = tex.format();
 			u32 format = raw_format & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
 
-			VkComponentMapping mapping = vk::get_component_mapping(format, tex.remap());
+			VkComponentMapping mapping = get_component_map(tex, format);
 			VkFormat vk_format = get_compatible_sampler_format(format);
 
 			VkImageType image_type;
 			VkImageViewType image_view_type;
-			u16 height;
-			u16 depth;
-			u8 layer;
+			u16 height = 0;
+			u16 depth = 0;
+			u8 layer = 0;
 			switch (tex.get_extended_texture_dimension())
 			{
 			case rsx::texture_dimension_extended::texture_dimension_1d:
@@ -221,6 +239,7 @@ namespace vk
 			case rsx::texture_dimension_extended::texture_dimension_3d:
 				image_type = VK_IMAGE_TYPE_3D;
 				image_view_type = VK_IMAGE_VIEW_TYPE_3D;
+				height = tex.height();
 				depth = tex.depth();
 				layer = 1;
 				break;
@@ -229,7 +248,14 @@ namespace vk
 			bool is_cubemap = tex.get_extended_texture_dimension() == rsx::texture_dimension_extended::texture_dimension_cubemap;
 			VkImageSubresourceRange subresource_range = vk::get_image_subresource_range(0, 0, is_cubemap ? 6 : 1, tex.get_exact_mipmap_count(), VK_IMAGE_ASPECT_COLOR_BIT);
 
-			cto.uploaded_texture = std::make_unique<vk::image>(*vk::get_current_renderer(), memory_type_mapping.device_local,
+			//If for some reason invalid dimensions are requested, fail
+			if (!height || !depth || !layer || !tex.width())
+			{
+				LOG_ERROR(RSX, "Texture upload requested but invalid texture dimensions passed");
+				return nullptr;
+			}
+
+			cto.uploaded_texture = std::make_unique<vk::image>(*vk::get_current_renderer(), memory_type_mapping.device_local, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				image_type,
 				vk_format,
 				tex.width(), height, depth, tex.get_exact_mipmap_count(), layer, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -237,7 +263,7 @@ namespace vk
 			change_image_layout(cmd, cto.uploaded_texture->value, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresource_range);
 
 			cto.uploaded_image_view = std::make_unique<vk::image_view>(*vk::get_current_renderer(), cto.uploaded_texture->value, image_view_type, vk_format,
-				vk::get_component_mapping(tex.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN), tex.remap()),
+				mapping,
 				subresource_range);
 
 			copy_mipmaped_image_using_buffer(cmd, cto.uploaded_texture->value, get_subresources_layout(tex), format, !(tex.format() & CELL_GCM_TEXTURE_LN), tex.get_exact_mipmap_count(),
@@ -285,6 +311,7 @@ namespace vk
 
 		void flush()
 		{
+			m_dirty_textures.clear();
 			m_temporary_image_view.clear();
 		}
 	};

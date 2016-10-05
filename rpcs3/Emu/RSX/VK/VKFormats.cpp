@@ -33,10 +33,10 @@ VkFormat get_compatible_depth_surface_format(const gpu_formats_support &support,
 	{
 		if (support.d24_unorm_s8) return VK_FORMAT_D24_UNORM_S8_UINT;
 		if (support.d32_sfloat_s8) return VK_FORMAT_D32_SFLOAT_S8_UINT;
-		throw EXCEPTION("No hardware support for z24s8");
+		fmt::throw_exception("No hardware support for z24s8" HERE);
 	}
 	}
-	throw EXCEPTION("Invalid format (0x%x)", format);
+	fmt::throw_exception("Invalid format (0x%x)" HERE, (u32)format);
 }
 
 std::tuple<VkFilter, VkSamplerMipmapMode> get_min_filter_and_mip(rsx::texture_minify_filter min_filter)
@@ -51,7 +51,7 @@ std::tuple<VkFilter, VkSamplerMipmapMode> get_min_filter_and_mip(rsx::texture_mi
 	case rsx::texture_minify_filter::linear_linear: return std::make_tuple(VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR);
 	case rsx::texture_minify_filter::convolution_min: return std::make_tuple(VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR);
 	}
-	throw EXCEPTION("Invalid max filter");
+	fmt::throw_exception("Invalid max filter" HERE);
 }
 
 VkFilter get_mag_filter(rsx::texture_magnify_filter mag_filter)
@@ -62,7 +62,7 @@ VkFilter get_mag_filter(rsx::texture_magnify_filter mag_filter)
 	case rsx::texture_magnify_filter::linear: return VK_FILTER_LINEAR;
 	case rsx::texture_magnify_filter::convolution_mag: return VK_FILTER_LINEAR;
 	}
-	throw EXCEPTION("Invalid mag filter (0x%x)", mag_filter);
+	fmt::throw_exception("Invalid mag filter (0x%x)" HERE, (u32)mag_filter);
 }
 
 VkBorderColor get_border_color(u8 color)
@@ -88,7 +88,7 @@ VkSamplerAddressMode vk_wrap_mode(rsx::texture_wrap_mode gcm_wrap)
 	case rsx::texture_wrap_mode::mirror_once_border: return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
 	case rsx::texture_wrap_mode::mirror_once_clamp: return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
 	}
-	throw EXCEPTION("unhandled texture clamp mode");
+	fmt::throw_exception("unhandled texture clamp mode" HERE);
 }
 
 float max_aniso(rsx::texture_max_anisotropy gcm_aniso)
@@ -105,7 +105,7 @@ float max_aniso(rsx::texture_max_anisotropy gcm_aniso)
 	case rsx::texture_max_anisotropy::x16: return 16.0f;
 	}
 
-	throw EXCEPTION("Texture anisotropy error: bad max aniso (%d).", gcm_aniso);
+	fmt::throw_exception("Texture anisotropy error: bad max aniso (%d)" HERE, (u32)gcm_aniso);
 }
 
 
@@ -115,6 +115,9 @@ VkComponentMapping get_component_mapping(u32 format, u8 swizzle_mask)
 	const u8 remap_r = (swizzle_mask >> 2) & 0x3;
 	const u8 remap_g = (swizzle_mask >> 4) & 0x3;
 	const u8 remap_b = (swizzle_mask >> 6) & 0x3;
+
+	//Component map in ARGB format
+	std::array<VkComponentSwizzle, 4> mapping = {};
 
 	switch (format)
 	{
@@ -126,64 +129,52 @@ VkComponentMapping get_component_mapping(u32 format, u8 swizzle_mask)
 	case CELL_GCM_TEXTURE_DEPTH24_D8_FLOAT:
 	case CELL_GCM_TEXTURE_DEPTH16:
 	case CELL_GCM_TEXTURE_DEPTH16_FLOAT:
-	case CELL_GCM_TEXTURE_W32_Z32_Y32_X32_FLOAT:
 	case CELL_GCM_TEXTURE_COMPRESSED_DXT1:
 	case CELL_GCM_TEXTURE_COMPRESSED_DXT23:
 	case CELL_GCM_TEXTURE_COMPRESSED_DXT45:
 	case CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
 	case CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
-		return { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
+		mapping = { VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B }; break;
 
-	case CELL_GCM_TEXTURE_B8:
-		return { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R };
+	case CELL_GCM_TEXTURE_A4R4G4B4:
+		mapping = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A }; break;
 
 	case CELL_GCM_TEXTURE_G8B8:
-	{
-		VkComponentSwizzle map_table[] = { VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R };
-		return{ map_table[remap_r], map_table[remap_g], map_table[remap_b], map_table[remap_a] };
-	}
+		mapping = { VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R }; break;
 
+	case CELL_GCM_TEXTURE_B8:
 	case CELL_GCM_TEXTURE_X16:
-		return { VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R };
+	case CELL_GCM_TEXTURE_X32_FLOAT:
+		mapping = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R }; break;
 
 	case CELL_GCM_TEXTURE_Y16_X16:
-		return { VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R };
-
 	case CELL_GCM_TEXTURE_Y16_X16_FLOAT:
-		return { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G };
+		mapping = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G }; break;
 
 	case CELL_GCM_TEXTURE_W16_Z16_Y16_X16_FLOAT:
-		return { VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R };
-		
-	case CELL_GCM_TEXTURE_X32_FLOAT:
-		return { VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R };
-		
-	case CELL_GCM_TEXTURE_A4R4G4B4:
-	{
-		VkComponentSwizzle map_table[] = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
-		return { map_table[remap_r], map_table[remap_g], map_table[remap_b], map_table[remap_a] };
-	}
-		
+	case CELL_GCM_TEXTURE_W32_Z32_Y32_X32_FLOAT:
+		mapping = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G }; break;
+				
 	case CELL_GCM_TEXTURE_D8R8G8B8:
 	case CELL_GCM_TEXTURE_D1R5G5B5:
-		return { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_ONE };
+		mapping = { VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B }; break;
 
 	case CELL_GCM_TEXTURE_COMPRESSED_HILO8:
 	case CELL_GCM_TEXTURE_COMPRESSED_HILO_S8:
-		return { VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R };
+		mapping = { VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R }; break;
 
 	case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
 	case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
-		return { VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ZERO };
-
+		mapping = { VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_R }; break;
 
 	case CELL_GCM_TEXTURE_A8R8G8B8:
-	{
-		VkComponentSwizzle map_table[] = { VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A };
-		return { map_table[remap_r], map_table[remap_g], map_table[remap_b], map_table[remap_a] };
+		mapping = { VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A }; break;
+
+	default:
+		fmt::throw_exception("Invalid or unsupported component mapping for texture format (0x%x)" HERE, format);
 	}
-	}
-	throw EXCEPTION("Invalid or unsupported component mapping for texture format (0x%x)", format);
+	
+	return {mapping[remap_r], mapping[remap_g], mapping[remap_b], mapping[remap_a]};
 }
 
 }

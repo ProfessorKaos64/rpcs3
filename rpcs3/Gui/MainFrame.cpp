@@ -279,7 +279,7 @@ void MainFrame::InstallPkg(wxCommandEvent& WXUNUSED(event))
 			if (pkg_install(pkg_f, local_path + '/', progress))
 			{
 				progress = 1.;
-				return_;
+				return;
 			}
 
 			// TODO: Ask user to delete files on cancellation/failure?
@@ -414,16 +414,16 @@ void MainFrame::Stop(wxCommandEvent& WXUNUSED(event))
 }
 
 // This is ugly, but PS3 headers shall not be included there.
-extern void sysutilSendSystemCommand(u64 status, u64 param);
+extern void sysutil_send_system_cmd(u64 status, u64 param);
 
 void MainFrame::SendExit(wxCommandEvent& event)
 {
-	sysutilSendSystemCommand(0x0101 /* CELL_SYSUTIL_REQUEST_EXITGAME */, 0);
+	sysutil_send_system_cmd(0x0101 /* CELL_SYSUTIL_REQUEST_EXITGAME */, 0);
 }
 
 void MainFrame::SendOpenCloseSysMenu(wxCommandEvent& event)
 {
-	sysutilSendSystemCommand(m_sys_menu_opened ? 0x0132 /* CELL_SYSUTIL_SYSTEM_MENU_CLOSE */ : 0x0131 /* CELL_SYSUTIL_SYSTEM_MENU_OPEN */, 0);
+	sysutil_send_system_cmd(m_sys_menu_opened ? 0x0132 /* CELL_SYSUTIL_SYSTEM_MENU_CLOSE */ : 0x0131 /* CELL_SYSUTIL_SYSTEM_MENU_OPEN */, 0);
 	m_sys_menu_opened = !m_sys_menu_opened;
 	wxCommandEvent ce;
 	UpdateUI(ce);

@@ -20,7 +20,7 @@ std::shared_ptr<lv2_event_queue_t> lv2_event_queue_t::make(u32 protocol, s32 typ
 {
 	auto queue = std::make_shared<lv2_event_queue_t>(protocol, type, name, ipc_key, size);
 
-	auto make_expr = WRAP_EXPR(idm::import<lv2_event_queue_t>(WRAP_EXPR(queue)));
+	auto make_expr = [&] { return idm::import<lv2_event_queue_t>([&] { return queue; }); };
 
 	if (ipc_key == SYS_EVENT_QUEUE_LOCAL)
 	{
@@ -50,7 +50,7 @@ std::shared_ptr<lv2_event_queue_t> lv2_event_queue_t::find(u64 ipc_key)
 
 void lv2_event_queue_t::push(lv2_lock_t, u64 source, u64 data1, u64 data2, u64 data3)
 {
-	EXPECTS(m_sq.empty() || m_events.empty());
+	verify(HERE), m_sq.empty() || m_events.empty();
 
 	// save event if no waiters
 	if (m_sq.empty())
@@ -61,17 +61,17 @@ void lv2_event_queue_t::push(lv2_lock_t, u64 source, u64 data1, u64 data2, u64 d
 	// notify waiter; protocol is ignored in current implementation
 	auto& thread = m_sq.front();
 
-	if (type == SYS_PPU_QUEUE && thread->type == cpu_type::ppu)
+	if (type == SYS_PPU_QUEUE && thread->id >= ppu_thread::id_min)
 	{
 		// store event data in registers
-		auto& ppu = static_cast<PPUThread&>(*thread);
+		auto& ppu = static_cast<ppu_thread&>(*thread);
 
-		ppu.GPR[4] = source;
-		ppu.GPR[5] = data1;
-		ppu.GPR[6] = data2;
-		ppu.GPR[7] = data3;
+		ppu.gpr[4] = source;
+		ppu.gpr[5] = data1;
+		ppu.gpr[6] = data2;
+		ppu.gpr[7] = data3;
 	}
-	else if (type == SYS_SPU_QUEUE && thread->type == cpu_type::spu)
+	else if (type == SYS_SPU_QUEUE && thread->id < ppu_thread::id_min)
 	{
 		// store event data in In_MBox
 		auto& spu = static_cast<SPUThread&>(*thread);
@@ -80,18 +80,17 @@ void lv2_event_queue_t::push(lv2_lock_t, u64 source, u64 data1, u64 data2, u64 d
 	}
 	else
 	{
-		throw fmt::exception("Unexpected (queue.type=%d, thread.type=%d)" HERE, type, thread->type);
+		fmt::throw_exception("Unexpected (queue type=%d, tid=%s)" HERE, type, thread->id);
 	}
 
-	VERIFY(!thread->state.test_and_set(cpu_state::signal));
-	(*thread)->notify();
+	thread->set_signal();
 
 	return m_sq.pop_front();
 }
 
 lv2_event_queue_t::event_type lv2_event_queue_t::pop(lv2_lock_t)
 {
-	EXPECTS(m_events.size());
+	verify(HERE), m_events.size();
 	auto result = m_events.front();
 	m_events.pop_front();
 	return result;
@@ -163,21 +162,21 @@ s32 sys_event_queue_destroy(u32 equeue_id, s32 mode)
 	// signal all threads to return CELL_ECANCELED
 	for (auto& thread : queue->thread_queue(lv2_lock))
 	{
-		if (queue->type == SYS_PPU_QUEUE && thread->type == cpu_type::ppu)
+		if (queue->type == SYS_PPU_QUEUE && thread->id >= ppu_thread::id_min)
 		{
-			static_cast<PPUThread&>(*thread).GPR[3] = 1;
+			static_cast<ppu_thread&>(*thread).gpr[3] = 1;
 		}
-		else if (queue->type == SYS_SPU_QUEUE && thread->type == cpu_type::spu)
+		else if (queue->type == SYS_SPU_QUEUE && thread->id < ppu_thread::id_min)
 		{
 			static_cast<SPUThread&>(*thread).ch_in_mbox.set_values(1, CELL_ECANCELED);
 		}
 		else
 		{
-			throw fmt::exception("Unexpected (queue.type=%d, thread.type=%d)" HERE, queue->type, thread->type);
+			fmt::throw_exception("Unexpected (queue type=%d, tid=%s)" HERE, queue->type, thread->id);
 		}
 
-		thread->state += cpu_state::signal;
-		(*thread)->notify();
+		thread->state += cpu_flag::signal;
+		thread->notify();
 	}
 
 	return CELL_OK;
@@ -198,7 +197,7 @@ s32 sys_event_queue_tryreceive(u32 equeue_id, vm::ptr<sys_event_t> event_array, 
 
 	if (size < 0)
 	{
-		throw fmt::exception("Negative size (%d)" HERE, size);
+		fmt::throw_exception("Negative size (%d)" HERE, size);
 	}
 
 	if (queue->type != SYS_PPU_QUEUE)
@@ -220,7 +219,7 @@ s32 sys_event_queue_tryreceive(u32 equeue_id, vm::ptr<sys_event_t> event_array, 
 	return CELL_OK;
 }
 
-s32 sys_event_queue_receive(PPUThread& ppu, u32 equeue_id, vm::ptr<sys_event_t> dummy_event, u64 timeout)
+s32 sys_event_queue_receive(ppu_thread& ppu, u32 equeue_id, vm::ptr<sys_event_t> dummy_event, u64 timeout)
 {
 	sys_event.trace("sys_event_queue_receive(equeue_id=0x%x, *0x%x, timeout=0x%llx)", equeue_id, dummy_event, timeout);
 
@@ -243,17 +242,17 @@ s32 sys_event_queue_receive(PPUThread& ppu, u32 equeue_id, vm::ptr<sys_event_t> 
 	if (queue->events())
 	{
 		// event data is returned in registers (dummy_event is not used)
-		std::tie(ppu.GPR[4], ppu.GPR[5], ppu.GPR[6], ppu.GPR[7]) = queue->pop(lv2_lock);
+		std::tie(ppu.gpr[4], ppu.gpr[5], ppu.gpr[6], ppu.gpr[7]) = queue->pop(lv2_lock);
 		return CELL_OK;
 	}
 
 	// cause (if cancelled) will be returned in r3
-	ppu.GPR[3] = 0;
+	ppu.gpr[3] = 0;
 
 	// add waiter; protocol is ignored in current implementation
 	sleep_entry<cpu_thread> waiter(queue->thread_queue(lv2_lock), ppu);
 
-	while (!ppu.state.test_and_reset(cpu_state::signal))
+	while (!ppu.state.test_and_reset(cpu_flag::signal))
 	{
 		CHECK_EMU_STATUS;
 
@@ -274,9 +273,8 @@ s32 sys_event_queue_receive(PPUThread& ppu, u32 equeue_id, vm::ptr<sys_event_t> 
 		}
 	}
 
-	if (ppu.GPR[3])
+	if (ppu.gpr[3])
 	{
-		ENSURES(!idm::check<lv2_event_queue_t>(equeue_id));
 		return CELL_ECANCELED;
 	}
 
