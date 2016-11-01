@@ -2,12 +2,14 @@
 #include "Utilities/Config.h"
 #include "Emu/Memory/Memory.h"
 #include "GLGSRender.h"
+#include "GLVertexProgram.h"
 #include "../rsx_methods.h"
 #include "../Common/BufferUtils.h"
 #include "../rsx_utils.h"
 
 extern cfg::bool_entry g_cfg_rsx_debug_output;
 extern cfg::bool_entry g_cfg_rsx_overlay;
+extern cfg::bool_entry g_cfg_rsx_gl_legacy_buffers;
 
 #define DUMP_VERTEX_DATA 0
 
@@ -374,14 +376,24 @@ namespace
 
 void GLGSRender::end()
 {
-	if (!draw_fbo || !load_program())
+	if (!draw_fbo)
 	{
 		rsx::thread::end();
 		return;
 	}
 
+	if (manually_flush_ring_buffers)
+	{
+		//Use approximations to reseve space. This path is mostly for debug purposes anyway
+		u32 approx_vertex_count = rsx::method_registers.current_draw_clause.get_elements_count();
+		u32 approx_working_buffer_size = approx_vertex_count * 256;
+
+		//Allocate 256K heap if we have no approximation at this time (inlined array)
+		m_attrib_ring_buffer->reserve_storage_on_heap(std::max(approx_working_buffer_size, 256 * 1024U));
+		m_index_ring_buffer->reserve_storage_on_heap(16 * 1024);
+	}
+
 	draw_fbo.bind();
-	m_program->use();
 
 	//Check if depth buffer is bound and valid
 	//If ds is not initialized clear it; it seems new depth textures should have depth cleared
@@ -397,24 +409,23 @@ void GLGSRender::end()
 		ds->set_cleared();
 	}
 
+	std::chrono::time_point<std::chrono::system_clock> textures_start = std::chrono::system_clock::now();
+
 	//Setup textures
 	for (int i = 0; i < rsx::limits::fragment_textures_count; ++i)
 	{
 		int location;
+		if (!rsx::method_registers.fragment_textures[i].enabled())
+		{
+			glActiveTexture(GL_TEXTURE0 + i);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			continue;
+		}
+
 		if (m_program->uniforms.has_location("tex" + std::to_string(i), &location))
 		{
-			if (!rsx::method_registers.fragment_textures[i].enabled())
-			{
-				glActiveTexture(GL_TEXTURE0 + i);
-				glBindTexture(GL_TEXTURE_2D, 0);
-				glProgramUniform1i(m_program->id(), location, i);
-				continue;
-			}
-
 			m_gl_textures[i].set_target(get_gl_target_for_texture(rsx::method_registers.fragment_textures[i]));
-
 			__glcheck m_gl_texture_cache.upload_texture(i, rsx::method_registers.fragment_textures[i], m_gl_textures[i], m_rtts);
-			glProgramUniform1i(m_program->id(), location, i);
 		}
 	}
 
@@ -423,33 +434,40 @@ void GLGSRender::end()
 	{
 		int texture_index = i + rsx::limits::fragment_textures_count;
 		int location;
+
+		if (!rsx::method_registers.vertex_textures[i].enabled())
+		{
+			glActiveTexture(GL_TEXTURE0 + texture_index);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			continue;
+		}
+
 		if (m_program->uniforms.has_location("vtex" + std::to_string(i), &location))
 		{
-			if (!rsx::method_registers.vertex_textures[i].enabled())
-			{
-				glActiveTexture(GL_TEXTURE0 + texture_index);
-				glBindTexture(GL_TEXTURE_2D, 0);
-				glProgramUniform1i(m_program->id(), location, texture_index);
-				continue;
-			}
-
 			m_gl_vertex_textures[i].set_target(get_gl_target_for_texture(rsx::method_registers.vertex_textures[i]));
-
 			__glcheck m_gl_texture_cache.upload_texture(texture_index, rsx::method_registers.vertex_textures[i], m_gl_vertex_textures[i], m_rtts);
-			glProgramUniform1i(m_program->id(), location, texture_index);
 		}
 	}
+
+	std::chrono::time_point<std::chrono::system_clock> textures_end = std::chrono::system_clock::now();
+	m_textures_upload_time += (u32)std::chrono::duration_cast<std::chrono::microseconds>(textures_end - textures_start).count();
 
 	u32 vertex_draw_count;
 	std::optional<std::tuple<GLenum, u32> > indexed_draw_info;
 	std::tie(vertex_draw_count, indexed_draw_info) = set_vertex_buffer();
 	m_vao.bind();
 
-	std::chrono::time_point<std::chrono::system_clock> then = std::chrono::system_clock::now();
+	std::chrono::time_point<std::chrono::system_clock> draw_start = std::chrono::system_clock::now();
 
 	if (g_cfg_rsx_debug_output)
 	{
 		m_program->validate();
+	}
+
+	if (manually_flush_ring_buffers)
+	{
+		m_attrib_ring_buffer->unmap();
+		m_index_ring_buffer->unmap();
 	}
 
 	if (indexed_draw_info)
@@ -467,8 +485,8 @@ void GLGSRender::end()
 		draw_fbo.draw_arrays(rsx::method_registers.current_draw_clause.primitive, vertex_draw_count);
 	}
 
-	std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
-	m_draw_time += (u32)std::chrono::duration_cast<std::chrono::microseconds>(now - then).count();
+	std::chrono::time_point<std::chrono::system_clock> draw_end = std::chrono::system_clock::now();
+	m_draw_time += (u32)std::chrono::duration_cast<std::chrono::microseconds>(draw_end - draw_start).count();
 
 	write_buffers();
 
@@ -507,18 +525,43 @@ void GLGSRender::on_init_thread()
 	glGetIntegerv(GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT, &m_min_texbuffer_alignment);
 	m_vao.create();
 
-	for (gl::texture &tex : m_gl_attrib_buffers)
+	const u32 texture_index_offset =
+		rsx::limits::fragment_textures_count + rsx::limits::vertex_textures_count;
+	for (int index = 0; index < rsx::limits::vertex_count; ++index)
 	{
+		auto &tex = m_gl_attrib_buffers[index];
 		tex.create();
 		tex.set_target(gl::texture::target::textureBuffer);
+
+		glActiveTexture(GL_TEXTURE0 + texture_index_offset + index);
+		tex.bind();
 	}
 
-	m_attrib_ring_buffer.create(gl::buffer::target::texture, 16 * 0x100000);
-	m_uniform_ring_buffer.create(gl::buffer::target::uniform, 16 * 0x100000);
-	m_index_ring_buffer.create(gl::buffer::target::element_array, 0x100000);
+	if (g_cfg_rsx_gl_legacy_buffers)
+	{
+		LOG_WARNING(RSX, "Using legacy openGL buffers.");
+		manually_flush_ring_buffers = true;
 
-	m_vao.element_array_buffer = m_index_ring_buffer;
+		m_attrib_ring_buffer.reset(new gl::legacy_ring_buffer());
+		m_uniform_ring_buffer.reset(new gl::legacy_ring_buffer());
+		m_index_ring_buffer.reset(new gl::legacy_ring_buffer());
+	}
+	else
+	{
+		m_attrib_ring_buffer.reset(new gl::ring_buffer());
+		m_uniform_ring_buffer.reset(new gl::ring_buffer());
+		m_index_ring_buffer.reset(new gl::ring_buffer());
+	}
+
+	m_attrib_ring_buffer->create(gl::buffer::target::texture, 256 * 0x100000);
+	m_uniform_ring_buffer->create(gl::buffer::target::uniform, 64 * 0x100000);
+	m_index_ring_buffer->create(gl::buffer::target::element_array, 16 * 0x100000);
+
+	m_vao.element_array_buffer = *m_index_ring_buffer;
 	m_gl_texture_cache.initialize_rtt_cache();
+
+	if (g_cfg_rsx_overlay)
+		m_text_printer.init();
 }
 
 void GLGSRender::on_exit()
@@ -552,9 +595,11 @@ void GLGSRender::on_exit()
 		tex.remove();
 	}
 
-	m_attrib_ring_buffer.remove();
-	m_uniform_ring_buffer.remove();
-	m_index_ring_buffer.remove();
+	m_attrib_ring_buffer->remove();
+	m_uniform_ring_buffer->remove();
+	m_index_ring_buffer->remove();
+
+	m_text_printer.close();
 
 	return GSRender::on_exit();
 }
@@ -653,6 +698,18 @@ bool GLGSRender::load_program()
 	RSXVertexProgram vertex_program = get_current_vertex_program();
 	RSXFragmentProgram fragment_program = get_current_fragment_program();
 
+	for (auto &vtx : vertex_program.rsx_vertex_inputs)
+	{
+		auto &array_info = rsx::method_registers.vertex_arrays_info[vtx.location];
+		if (array_info.type() == rsx::vertex_base_type::s1 ||
+			array_info.type() == rsx::vertex_base_type::cmp)
+		{
+			//Some vendors do not support GL_x_SNORM buffer textures
+			verify(HERE), vtx.flags == 0;
+			vtx.flags |= GL_VP_FORCE_ATTRIB_SCALING | GL_VP_ATTRIB_S16_INT;
+		}
+	}
+
 	for (int i = 0; i < 16; ++i)
 	{
 		auto &tex = rsx::method_registers.fragment_textures[i];
@@ -674,13 +731,55 @@ bool GLGSRender::load_program()
 		}
 	}
 
+	auto old_program = m_program;
 	m_program = &m_prog_buffer.getGraphicPipelineState(vertex_program, fragment_program, nullptr);
 	m_program->use();
+
+	if (old_program == m_program && !m_transform_constants_dirty)
+	{
+		//This path is taken alot so the savings are tangible
+		struct scale_offset_layout
+		{
+			u16 clip_w, clip_h;
+			float scale_x, offset_x, scale_y, offset_y, scale_z, offset_z;
+			float fog0, fog1;
+			u32   alpha_tested;
+			float alpha_ref;
+		}
+		tmp = {};
+		
+		tmp.clip_w = rsx::method_registers.surface_clip_width();
+		tmp.clip_h = rsx::method_registers.surface_clip_height();
+		tmp.scale_x = rsx::method_registers.viewport_scale_x();
+		tmp.offset_x = rsx::method_registers.viewport_offset_x();
+		tmp.scale_y = rsx::method_registers.viewport_scale_y();
+		tmp.offset_y = rsx::method_registers.viewport_offset_y();
+		tmp.scale_z = rsx::method_registers.viewport_scale_z();
+		tmp.offset_z = rsx::method_registers.viewport_offset_z();
+		tmp.fog0 = rsx::method_registers.fog_params_0();
+		tmp.fog1 = rsx::method_registers.fog_params_1();
+		tmp.alpha_tested = rsx::method_registers.alpha_test_enabled();
+		tmp.alpha_ref = rsx::method_registers.alpha_ref();
+
+		size_t old_hash = m_transform_buffer_hash;
+		m_transform_buffer_hash = 0;
+
+		u8 *data = reinterpret_cast<u8*>(&tmp);
+		for (int i = 0; i < sizeof(tmp); ++i)
+			m_transform_buffer_hash ^= std::hash<char>()(data[i]);
+
+		if (old_hash == m_transform_buffer_hash)
+			return true;
+	}
+
+	m_transform_constants_dirty = false;
 
 	u32 fragment_constants_size = m_prog_buffer.get_fragment_constants_buffer_size(fragment_program);
 	fragment_constants_size = std::max(32U, fragment_constants_size);
 	u32 max_buffer_sz = 512 + 8192 + align(fragment_constants_size, m_uniform_buffer_offset_align);
-	m_uniform_ring_buffer.reserve_and_map(max_buffer_sz);
+
+	if (manually_flush_ring_buffers)
+		m_uniform_ring_buffer->reserve_storage_on_heap(align(max_buffer_sz, 512));
 
 	u8 *buf;
 	u32 scale_offset_offset;
@@ -688,7 +787,7 @@ bool GLGSRender::load_program()
 	u32 fragment_constants_offset;
 
 	// Scale offset
-	auto mapping = m_uniform_ring_buffer.alloc_from_reserve(512);
+	auto mapping = m_uniform_ring_buffer->alloc_from_heap(512, m_uniform_buffer_offset_align);
 	buf = static_cast<u8*>(mapping.first);
 	scale_offset_offset = mapping.second;
 	fill_scale_offset_data(buf, false);
@@ -704,7 +803,7 @@ bool GLGSRender::load_program()
 	memcpy(buf + 19 * sizeof(float), &alpha_ref, sizeof(float));
 
 	// Vertex constants
-	mapping = m_uniform_ring_buffer.alloc_from_reserve(8192);
+	mapping = m_uniform_ring_buffer->alloc_from_heap(8192, m_uniform_buffer_offset_align);
 	buf = static_cast<u8*>(mapping.first);
 	vertex_constants_offset = mapping.second;
 	fill_vertex_program_constants_data(buf);
@@ -712,20 +811,21 @@ bool GLGSRender::load_program()
 	// Fragment constants
 	if (fragment_constants_size)
 	{
-		mapping = m_uniform_ring_buffer.alloc_from_reserve(fragment_constants_size);
+		mapping = m_uniform_ring_buffer->alloc_from_heap(fragment_constants_size, m_uniform_buffer_offset_align);
 		buf = static_cast<u8*>(mapping.first);
 		fragment_constants_offset = mapping.second;
 		m_prog_buffer.fill_fragment_constants_buffer({ reinterpret_cast<float*>(buf), gsl::narrow<int>(fragment_constants_size) }, fragment_program);
 	}
 
-	m_uniform_ring_buffer.unmap();
-
-	m_uniform_ring_buffer.bind_range(0, scale_offset_offset, 512);
-	m_uniform_ring_buffer.bind_range(1, vertex_constants_offset, 8192);
+	m_uniform_ring_buffer->bind_range(0, scale_offset_offset, 512);
+	m_uniform_ring_buffer->bind_range(1, vertex_constants_offset, 8192);
 	if (fragment_constants_size)
 	{
-		m_uniform_ring_buffer.bind_range(2, fragment_constants_offset, fragment_constants_size);
+		m_uniform_ring_buffer->bind_range(2, fragment_constants_offset, fragment_constants_size);
 	}
+
+	if (manually_flush_ring_buffers)
+		m_uniform_ring_buffer->unmap();
 
 	return true;
 }
@@ -833,27 +933,25 @@ void GLGSRender::flip(int buffer)
 
 	__glcheck flip_fbo->blit(gl::screen, screen_area, areai(aspect_ratio).flipped_vertical());
 
-	m_frame->flip(m_context);
-
 	if (g_cfg_rsx_overlay)
 	{
-		//TODO: Display overlay in a cross-platform manner
-		//Core context throws wgl font functions out of the window as they use display lists
-		//Only show debug info if the user really requests it
-
-		if (g_cfg_rsx_debug_output)
-		{
-			std::string message =
-				"draw_calls: " + std::to_string(m_draw_calls) + ", " + "draw_call_setup: " + std::to_string(m_begin_time) + "us, " + "vertex_upload_time: " + std::to_string(m_vertex_upload_time) + "us, " + "draw_call_execution: " + std::to_string(m_draw_time) + "us";
-
-			LOG_ERROR(RSX, "%s", message);
-		}
+		gl::screen.bind();
+		glViewport(0, 0, m_frame->client_width(), m_frame->client_height());
+		
+		m_text_printer.print_text(0, 0, m_frame->client_width(), m_frame->client_height(), "draw calls: " + std::to_string(m_draw_calls));
+		m_text_printer.print_text(0, 18, m_frame->client_width(), m_frame->client_height(), "draw call setup: " + std::to_string(m_begin_time) + "us");
+		m_text_printer.print_text(0, 36, m_frame->client_width(), m_frame->client_height(), "vertex upload time: " + std::to_string(m_vertex_upload_time) + "us");
+		m_text_printer.print_text(0, 54, m_frame->client_width(), m_frame->client_height(), "textures upload time: " + std::to_string(m_textures_upload_time) + "us");
+		m_text_printer.print_text(0, 72, m_frame->client_width(), m_frame->client_height(), "draw call execution: " + std::to_string(m_draw_time) + "us");
 	}
+
+	m_frame->flip(m_context);
 
 	m_draw_calls = 0;
 	m_begin_time = 0;
 	m_draw_time = 0;
 	m_vertex_upload_time = 0;
+	m_textures_upload_time = 0;
 
 	for (auto &tex : m_rtts.invalidated_resources)
 	{
