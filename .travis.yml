@@ -12,13 +12,13 @@ compiler:
  - clang
  - gcc
 
-env:
-  global:
-   - secure: "Vf+FY48nip9JppMnq11105NealdErSWsoUhHo63/V3V+LKfA9guenxCp93/qoSIdSGC/sJwb0yIIMGvkTT/rxDJNh6Z+BWUTb2E0WEIIQbvTJNOSUzoq7dfF1LT61XjVjByFzcbC2xjtaBowmcAYEs1jGUUuEjYVCMmD5lY8hUg="
-   # Which Travis environment to run Coverity on
-   - coverity_scan_run_condition='"$TRAVIS_OS_NAME" = linux -a "$CC" = gcc'
-   # Test mode is for testing if it's working with Coverity. Change to true if testing, to avoid reaching the quota.
-   - coverity_scan_script_test_mode=false
+#env:
+#  global:
+ #  - secure: "Vf+FY48nip9JppMnq11105NealdErSWsoUhHo63/V3V+LKfA9guenxCp93/qoSIdSGC/sJwb0yIIMGvkTT/rxDJNh6Z+BWUTb2E0WEIIQbvTJNOSUzoq7dfF1LT61XjVjByFzcbC2xjtaBowmcAYEs1jGUUuEjYVCMmD5lY8hUg="
+ #  # Which Travis environment to run Coverity on
+ #  - coverity_scan_run_condition='"$TRAVIS_OS_NAME" = linux -a "$CC" = gcc'
+ #  # Test mode is for testing if it's working with Coverity. Change to true if testing, to avoid reaching the quota.
+ #  - coverity_scan_script_test_mode=false
 
 matrix:
  exclude:
